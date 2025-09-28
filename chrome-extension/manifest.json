@@ -1,0 +1,24 @@
+{
+  "manifest_version": 3,
+  "name": "Bhulekh Content Reader",
+  "version": "1.0",
+  "description": "Reads content from Bhulekh website and provides chat interface",
+  "permissions": [
+    "activeTab",
+    "scripting"
+  ],
+  "host_permissions": [
+    "https://bhulekh.ori.nic.in/*",
+    "http://localhost:8000/*"
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Bhulekh Content Reader"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://bhulekh.ori.nic.in/SRoRFront_Uni.aspx*"],
+      "js": ["content.js"]
+    }
+  ]
+}
