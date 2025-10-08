@@ -185,7 +185,8 @@ h3 {
   }
 }
 
-#readContentBtn {
+#readContentBtn,
+#extractDetailsBtn {
   margin-bottom: var(--spacing-md);
   padding: var(--spacing-sm) 16px;
   background-color: var(--color-success);
@@ -198,6 +199,20 @@ h3 {
 
   &:hover {
     background-color: var(--color-success-hover);
+  }
+
+  &:disabled {
+    background-color: var(--color-gray-500);
+    cursor: not-allowed;
+  }
+}
+
+#extractDetailsBtn {
+  margin-left: var(--spacing-sm);
+  background-color: var(--color-primary);
+
+  &:hover {
+    background-color: var(--color-primary-hover);
   }
 }
 
@@ -252,5 +267,83 @@ h3 {
       border-color: var(--color-gray-400);
       box-shadow: none;
     }
+  }
+}
+
+/* ==================== Extraction Display ==================== */
+.extraction-display {
+  margin: var(--spacing-md) 0;
+  font-size: var(--font-size-sm);
+}
+
+.extraction-section {
+  background-color: white;
+  border: 1px solid var(--color-gray-400);
+  border-radius: var(--radius-md);
+  padding: var(--spacing-md);
+
+  & h4 {
+    margin: var(--spacing-md) 0 var(--spacing-sm) 0;
+    color: var(--color-gray-900);
+    font-size: var(--font-size-base);
+    font-weight: 600;
+    border-bottom: 2px solid var(--color-primary);
+    padding-bottom: var(--spacing-xs);
+
+    &:first-child {
+      margin-top: 0;
+    }
+  }
+}
+
+.extraction-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: var(--spacing-md);
+
+  & tr {
+    border-bottom: 1px solid var(--color-gray-300);
+
+    &:last-child {
+      border-bottom: none;
+    }
+  }
+
+  & td {
+    padding: var(--spacing-sm) var(--spacing-xs);
+    vertical-align: top;
+
+    &:first-child {
+      width: 40%;
+      color: var(--color-gray-600);
+      font-weight: 500;
+    }
+
+    &:last-child {
+      width: 60%;
+      color: var(--color-gray-900);
+    }
+  }
+}
+
+.special-comments {
+  padding: var(--spacing-md);
+  background-color: var(--color-gray-100);
+  border-left: 3px solid var(--color-primary);
+  border-radius: var(--radius-sm);
+  margin: var(--spacing-sm) 0;
+  line-height: 1.5;
+  color: var(--color-gray-900);
+}
+
+.extraction-metadata {
+  margin-top: var(--spacing-md);
+  padding-top: var(--spacing-sm);
+  border-top: 1px solid var(--color-gray-300);
+  text-align: center;
+
+  & small {
+    color: var(--color-gray-500);
+    font-size: var(--font-size-xs);
   }
 }

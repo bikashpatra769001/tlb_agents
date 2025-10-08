@@ -18,10 +18,11 @@ This is a Chrome extension with a FastAPI backend that enables chat-based intera
    - Contains `SummarizationAgent` class with fallback responses when API key is unavailable
 
 2. **Chrome Extension** (`chrome-extension/`)
-   - Manifest V3 Chrome extension
-   - Chat interface in popup window (`popup.html`, `popup.js`)
-   - Content script (`content.js`) for Bhulekh page extraction
+   - Manifest V3 Chrome extension written in TypeScript
+   - Chat interface in popup window (`popup.html`, compiled from `src/popup.ts`)
+   - Content script (compiled from `src/content.ts`) for Bhulekh page extraction
    - Restricted to `https://bhulekh.ori.nic.in/*` URLs
+   - TypeScript source in `src/`, compiled JavaScript in `dist/`
 
 ### Key Components
 
@@ -109,9 +110,35 @@ SUPABASE_KEY=your_supabase_anon_key
 
 ### Chrome Extension Development
 
-1. Load extension: Chrome → `chrome://extensions/` → Enable Developer Mode → Load Unpacked → Select `chrome-extension/` folder
-2. After code changes to extension: Click reload icon on extension card
-3. After API changes: Restart `python api_server.py`
+The extension is written in TypeScript and must be compiled before use:
+
+```bash
+cd chrome-extension
+
+# Install dependencies (first time only)
+npm install
+
+# Build TypeScript to JavaScript
+npm run build
+
+# Watch mode for development (auto-recompile on changes)
+npm run watch
+
+# Clean build artifacts
+npm run clean
+```
+
+**Loading the extension:**
+1. Build the extension first: `cd chrome-extension && npm run build`
+2. Chrome → `chrome://extensions/` → Enable Developer Mode → Load Unpacked → Select `chrome-extension/` folder
+3. After TypeScript changes: Run `npm run build` (or use `npm run watch`), then click reload icon on extension card
+4. After API changes: Restart `python api_server.py`
+
+**TypeScript structure:**
+- Source files: `chrome-extension/src/*.ts`
+- Compiled output: `chrome-extension/dist/*.js`
+- Configuration: `tsconfig.json`
+- Chrome API types: `@types/chrome` package
 
 ## Testing Workflow
 

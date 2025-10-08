@@ -13,6 +13,26 @@
 -- ============================================================================
 
 -- ============================================================================
+-- Drop existing objects (for clean reinstall)
+-- ============================================================================
+
+-- Drop views first (they depend on tables)
+DROP VIEW IF EXISTS model_accuracy CASCADE;
+DROP VIEW IF EXISTS latest_extractions CASCADE;
+
+-- Drop triggers
+DROP TRIGGER IF EXISTS update_khatiyan_extractions_updated_at ON khatiyan_extractions;
+DROP TRIGGER IF EXISTS update_khatiyan_records_updated_at ON khatiyan_records;
+
+-- Drop function
+DROP FUNCTION IF EXISTS update_updated_at_column() CASCADE;
+
+-- Drop tables (in reverse dependency order)
+DROP TABLE IF EXISTS prompt_optimizations CASCADE;
+DROP TABLE IF EXISTS khatiyan_extractions CASCADE;
+DROP TABLE IF EXISTS khatiyan_records CASCADE;
+
+-- ============================================================================
 -- Table: khatiyan_records
 -- ============================================================================
 -- Stores unique Bhulekh webpage records with raw content
@@ -62,11 +82,25 @@ CREATE TABLE khatiyan_extractions (
   prompt_version TEXT DEFAULT 'v1',  -- Track DSPy signature versions
   prompt_config JSONB,           -- Store DSPy config/optimizer used
 
-  -- Extracted fields
+  -- Extracted fields (location information)
   district TEXT,
   tehsil TEXT,
   village TEXT,
   khatiyan_number TEXT,
+
+  -- Owner information (all in English)
+  owner_name TEXT,
+  father_name TEXT,
+
+  -- Plot information
+  total_plots TEXT,
+  plot_numbers TEXT,
+  total_area TEXT,
+
+  -- Additional details (all in English)
+  land_type TEXT,
+  special_comments TEXT,
+  other_owners TEXT,
 
   -- Full extraction data (with any additional fields or confidence scores)
   extraction_data JSONB,

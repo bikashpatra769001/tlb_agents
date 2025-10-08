@@ -13,12 +13,17 @@
   ],
   "action": {
     "default_popup": "popup.html",
-    "default_title": "Bhulekh Content Reader"
+    "default_title": "Bhulekh Content Reader",
+    "default_icon": {
+      "16": "icon16.png",
+      "48": "icon48.png",
+      "128": "icon128.png"
+    }
   },
   "content_scripts": [
     {
       "matches": ["https://bhulekh.ori.nic.in/SRoRFront_Uni.aspx*"],
-      "js": ["content.js"]
+      "js": ["dist/content.js"]
     }
   ]
 }

@@ -1,0 +1,14 @@
+{
+  "name": "bhulekha-content-reader",
+  "version": "1.0.0",
+  "description": "TypeScript-based Chrome extension for Bhulekh website",
+  "scripts": {
+    "build": "tsc",
+    "watch": "tsc --watch",
+    "clean": "rm -rf dist"
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.0.268",
+    "typescript": "^5.4.5"
+  }
+}
