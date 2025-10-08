@@ -220,30 +220,81 @@ summarization_agent = SummarizationAgent(anthropic_client)
 
 # ==================== Supabase Storage Functions ====================
 
-async def store_khatiyan_record(khatiyan_data: dict, url: str, title: str) -> bool:
-    """Store Khatiyan extraction data to Supabase"""
+async def get_or_create_khatiyan_record(url: str, title: str, raw_content: str, raw_html: str = None) -> Optional[int]:
+    """Get existing or create new khatiyan_record and return its ID"""
+    if not supabase_client:
+        print("⚠️  Supabase client not available - skipping data storage")
+        return None
+
+    try:
+        # Try to find existing record by URL (from recent time window to avoid duplicates)
+        # Note: In production, you might want more sophisticated deduplication
+        result = supabase_client.table("khatiyan_records")\
+            .select("id")\
+            .eq("url", url)\
+            .order("created_at", desc=True)\
+            .limit(1)\
+            .execute()
+
+        if result.data and len(result.data) > 0:
+            record_id = result.data[0]["id"]
+            print(f"📌 Found existing khatiyan_record: {record_id}")
+            return record_id
+
+        # Create new record
+        data = {
+            "url": url,
+            "title": title,
+            "raw_content": raw_content,
+            "raw_html": raw_html
+        }
+
+        result = supabase_client.table("khatiyan_records").insert(data).execute()
+        record_id = result.data[0]["id"]
+        print(f"✅ Created new khatiyan_record: {record_id}")
+        return record_id
+
+    except Exception as e:
+        print(f"❌ Error creating khatiyan_record: {e}")
+        return None
+
+
+async def store_khatiyan_extraction(
+    khatiyan_record_id: int,
+    extraction_data: dict,
+    model_provider: str,
+    model_name: str,
+    prompt_version: str = "v1",
+    extraction_time_ms: int = None,
+    tokens_used: int = None
+) -> bool:
+    """Store AI model extraction to Supabase"""
     if not supabase_client:
         print("⚠️  Supabase client not available - skipping data storage")
         return False
 
     try:
         data = {
-            "district": khatiyan_data.get("district"),
-            "tehsil": khatiyan_data.get("tehsil"),
-            "village": khatiyan_data.get("village"),
-            "khatiyan_number": khatiyan_data.get("khatiyan_number"),
-            "claude_extract": khatiyan_data,  # Store full extraction as JSONB
-            "extraction_status": None,  # Will be updated via user feedback
-            "url": url,
-            "title": title
+            "khatiyan_record_id": khatiyan_record_id,
+            "model_provider": model_provider,
+            "model_name": model_name,
+            "prompt_version": prompt_version,
+            "district": extraction_data.get("district"),
+            "tehsil": extraction_data.get("tehsil"),
+            "village": extraction_data.get("village"),
+            "khatiyan_number": extraction_data.get("khatiyan_number"),
+            "extraction_data": extraction_data,  # Full extraction as JSONB
+            "extraction_status": "pending",  # Will be updated via user feedback
+            "extraction_time_ms": extraction_time_ms,
+            "tokens_used": tokens_used
         }
 
-        result = supabase_client.table("khatiyan_records").insert(data).execute()
-        print(f"✅ Stored Khatiyan record to Supabase: {khatiyan_data.get('khatiyan_number')}")
+        result = supabase_client.table("khatiyan_extractions").insert(data).execute()
+        print(f"✅ Stored extraction from {model_name}: {extraction_data.get('khatiyan_number')}")
         return True
 
     except Exception as e:
-        print(f"❌ Error storing to Supabase: {e}")
+        print(f"❌ Error storing extraction: {e}")
         return False
 
 # Define allowed URLs
@@ -357,6 +408,8 @@ async def explain_content(webpage: WebpageContent):
     """
     Provide a simple explanation of the webpage content in English and extract Khatiyan details
     """
+    import time
+
     try:
         # Validate URL - only allow Bhulekh website
         if not is_url_allowed(webpage.url):
@@ -368,13 +421,34 @@ async def explain_content(webpage: WebpageContent):
 
         # Extract content
         text_content = webpage.content.get('text', '')
+        html_content = webpage.content.get('html', '')
 
-        # Extract Khatiyan details using DSPy
+        # Create or get khatiyan_record
+        record_id = await get_or_create_khatiyan_record(
+            url=webpage.url,
+            title=webpage.title,
+            raw_content=text_content,
+            raw_html=html_content
+        )
+
+        # Extract Khatiyan details using DSPy (with timing)
+        extraction_start = time.time()
         khatiyan_data = await summarization_agent.extract_khatiyan_details(text_content, webpage.title)
-        print(f"Extracted Khatiyan data: {khatiyan_data}")
+        extraction_time_ms = int((time.time() - extraction_start) * 1000)
 
-        # Store extracted data in Supabase
-        await store_khatiyan_record(khatiyan_data, webpage.url, webpage.title)
+        print(f"Extracted Khatiyan data in {extraction_time_ms}ms: {khatiyan_data}")
+
+        # Store extraction to Supabase (if record was created)
+        if record_id:
+            await store_khatiyan_extraction(
+                khatiyan_record_id=record_id,
+                extraction_data=khatiyan_data,
+                model_provider="anthropic",
+                model_name="claude-3-5-sonnet-20241022",
+                prompt_version="v1",  # Increment this when you optimize DSPy prompts
+                extraction_time_ms=extraction_time_ms,
+                tokens_used=None  # Could be tracked from Anthropic API response if needed
+            )
 
         # Get simple explanation from Claude using DSPy
         explanation = await summarization_agent.explain_content(text_content, webpage.title)
@@ -385,7 +459,8 @@ async def explain_content(webpage: WebpageContent):
             "explanation": explanation,
             "khatiyan_data": khatiyan_data,
             "url": webpage.url,
-            "title": webpage.title
+            "title": webpage.title,
+            "record_id": record_id
         }
 
     except Exception as e:

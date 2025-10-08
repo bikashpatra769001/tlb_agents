@@ -31,9 +31,31 @@ This is a Chrome extension with a FastAPI backend that enables chat-based intera
   - `AnswerQuestion`: Answer user questions
   - `SummarizeContent`: Create summaries
 - **SummarizationAgent** (api_server.py:104-216): Handles all AI operations using DSPy
-- **Supabase Storage** (api_server.py:223-247): Stores extracted Khatiyan data
-- **URL Whitelist** (api_server.py:249-256): Security restriction to Bhulekh URLs only
+- **Supabase Storage Functions**:
+  - `get_or_create_khatiyan_record()`: Creates/retrieves page record
+  - `store_khatiyan_extraction()`: Stores model extraction with metadata
+- **URL Whitelist** (api_server.py:300-307): Security restriction to Bhulekh URLs only
 - **In-memory Storage** (api_server.py:27): `page_contexts` dict - for chat context only
+
+### Database Schema
+
+The application uses a **two-table design** for extensibility:
+
+1. **khatiyan_records**: Stores raw page content once
+   - Deduplication by URL
+   - One record per unique page visit
+
+2. **khatiyan_extractions**: Stores AI model outputs
+   - Multiple extractions per record (different models/prompts)
+   - Tracks: model provider, name, version, prompt version
+   - Performance metrics: time, tokens
+   - Quality tracking: extraction_status (pending/correct/wrong)
+
+This design enables:
+- Multi-model comparison (Claude vs GPT-4 vs Mistral)
+- A/B testing different prompts
+- DSPy optimization tracking
+- Cost and performance analysis
 
 ## Development Commands
 
@@ -70,21 +92,16 @@ SUPABASE_KEY=your_supabase_anon_key
 2. Create new project
 3. Go to Project Settings → API
 4. Copy `URL` and `anon/public` key
-5. Create table `khatiyan_records` with schema:
-   ```sql
-   CREATE TABLE khatiyan_records (
-     id BIGSERIAL PRIMARY KEY,
-     district TEXT,
-     tehsil TEXT,
-     village TEXT,
-     khatiyan_number TEXT,
-     claude_extract JSONB,
-     extraction_status TEXT CHECK (extraction_status IN ('correct', 'wrong')),
-     url TEXT,
-     title TEXT,
-     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-   );
-   ```
+5. Run the SQL schema from `schema.sql`:
+   - Open Supabase SQL Editor
+   - Copy entire contents of `schema.sql`
+   - Execute to create tables, indexes, views, and triggers
+
+**Schema Overview:**
+- `khatiyan_records`: Stores unique page content (one per URL visit)
+- `khatiyan_extractions`: Stores AI model extractions (many per record)
+- `prompt_optimizations`: Tracks DSPy optimization experiments (optional)
+- Views for model comparison and accuracy tracking
 
 **Without keys:**
 - `ANTHROPIC_API_KEY` missing: Fallback responses (limited functionality)
@@ -160,6 +177,44 @@ result = self.new_task(input_field="...")
 # Use DSPy optimizers to improve extraction accuracy
 optimizer = dspy.BootstrapFewShot(metric=accuracy)
 optimized = optimizer.compile(extractor, trainset=feedback_data)
+```
+
+**Tracking Prompt Versions:**
+- Increment `prompt_version` in `/explain` endpoint when optimizing
+- Each version stored separately in `khatiyan_extractions`
+- Compare accuracy across versions using `model_accuracy` view
+
+## Multi-Model Support
+
+The schema supports multiple AI models:
+
+**Adding a New Model:**
+```python
+# In /explain endpoint, add another extraction:
+gpt4_data = await gpt4_agent.extract_khatiyan_details(...)
+
+await store_khatiyan_extraction(
+    khatiyan_record_id=record_id,
+    extraction_data=gpt4_data,
+    model_provider="openai",
+    model_name="gpt-4-turbo",
+    prompt_version="v1"
+)
+```
+
+**Comparing Models:**
+```sql
+-- Query the model_accuracy view
+SELECT * FROM model_accuracy ORDER BY accuracy_percentage DESC;
+
+-- Find disagreements between models
+SELECT kr.url, ke1.district as claude_dist, ke2.district as gpt4_dist
+FROM khatiyan_records kr
+JOIN khatiyan_extractions ke1 ON kr.id = ke1.khatiyan_record_id
+  AND ke1.model_name = 'claude-3-5-sonnet-20241022'
+JOIN khatiyan_extractions ke2 ON kr.id = ke2.khatiyan_record_id
+  AND ke2.model_name = 'gpt-4-turbo'
+WHERE ke1.district != ke2.district;
 ```
 
 ## Production Considerations
