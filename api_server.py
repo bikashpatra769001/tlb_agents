@@ -308,7 +308,7 @@ async def store_khatiyan_extraction(
     extraction_time_ms: int = None,
     tokens_used: int = None
 ) -> bool:
-    """Store AI model extraction to Supabase"""
+    """Store AI model extraction to Supabase with JSON-based schema"""
     if not supabase_client:
         print("⚠️  Supabase client not available - skipping data storage")
         return False
@@ -319,28 +319,7 @@ async def store_khatiyan_extraction(
             "model_provider": model_provider,
             "model_name": model_name,
             "prompt_version": prompt_version,
-
-            # Location information
-            "district": extraction_data.get("district"),
-            "tehsil": extraction_data.get("tehsil"),
-            "village": extraction_data.get("village"),
-            "khatiyan_number": extraction_data.get("khatiyan_number"),
-
-            # Owner information
-            "owner_name": extraction_data.get("owner_name"),
-            "father_name": extraction_data.get("father_name"),
-
-            # Plot information
-            "total_plots": extraction_data.get("total_plots"),
-            "plot_numbers": extraction_data.get("plot_numbers"),
-            "total_area": extraction_data.get("total_area"),
-
-            # Additional details
-            "land_type": extraction_data.get("land_type"),
-            "special_comments": extraction_data.get("special_comments"),
-            "other_owners": extraction_data.get("other_owners"),
-
-            "extraction_data": extraction_data,  # Full extraction as JSONB
+            "extraction_data": extraction_data,  # All extracted fields stored as JSONB
             "extraction_status": "pending",  # Will be updated via user feedback
             "extraction_time_ms": extraction_time_ms,
             "tokens_used": tokens_used
@@ -635,28 +614,29 @@ async def get_extraction(webpage: WebpageContent):
             )
 
         extraction = extraction_result.data[0]
+        extraction_data = extraction.get("extraction_data", {})
 
         # Format the extraction data for display
         formatted_data = {
             "location": {
-                "district": extraction.get("district"),
-                "tehsil": extraction.get("tehsil"),
-                "village": extraction.get("village"),
-                "khatiyan_number": extraction.get("khatiyan_number")
+                "district": extraction_data.get("district"),
+                "tehsil": extraction_data.get("tehsil"),
+                "village": extraction_data.get("village"),
+                "khatiyan_number": extraction_data.get("khatiyan_number")
             },
             "owner_details": {
-                "owner_name": extraction.get("owner_name"),
-                "father_name": extraction.get("father_name"),
-                "other_owners": extraction.get("other_owners")
+                "owner_name": extraction_data.get("owner_name"),
+                "father_name": extraction_data.get("father_name"),
+                "other_owners": extraction_data.get("other_owners")
             },
             "plot_information": {
-                "total_plots": extraction.get("total_plots"),
-                "plot_numbers": extraction.get("plot_numbers"),
-                "total_area": extraction.get("total_area"),
-                "land_type": extraction.get("land_type")
+                "total_plots": extraction_data.get("total_plots"),
+                "plot_numbers": extraction_data.get("plot_numbers"),
+                "total_area": extraction_data.get("total_area"),
+                "land_type": extraction_data.get("land_type")
             },
             "additional_info": {
-                "special_comments": extraction.get("special_comments")
+                "special_comments": extraction_data.get("special_comments")
             },
             "metadata": {
                 "model_name": extraction.get("model_name"),

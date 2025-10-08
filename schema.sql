@@ -17,6 +17,7 @@
 -- ============================================================================
 
 -- Drop views first (they depend on tables)
+DROP VIEW IF EXISTS extraction_details CASCADE;
 DROP VIEW IF EXISTS model_accuracy CASCADE;
 DROP VIEW IF EXISTS latest_extractions CASCADE;
 
@@ -82,28 +83,10 @@ CREATE TABLE khatiyan_extractions (
   prompt_version TEXT DEFAULT 'v1',  -- Track DSPy signature versions
   prompt_config JSONB,           -- Store DSPy config/optimizer used
 
-  -- Extracted fields (location information)
-  district TEXT,
-  tehsil TEXT,
-  village TEXT,
-  khatiyan_number TEXT,
-
-  -- Owner information (all in English)
-  owner_name TEXT,
-  father_name TEXT,
-
-  -- Plot information
-  total_plots TEXT,
-  plot_numbers TEXT,
-  total_area TEXT,
-
-  -- Additional details (all in English)
-  land_type TEXT,
-  special_comments TEXT,
-  other_owners TEXT,
-
-  -- Full extraction data (with any additional fields or confidence scores)
-  extraction_data JSONB,
+  -- Extracted data stored as JSON (extensible schema)
+  -- This allows adding new fields without schema migrations
+  -- Example structure: {"district": "...", "tehsil": "...", "owner_name": "...", ...}
+  extraction_data JSONB NOT NULL,
 
   -- Quality and validation
   extraction_status TEXT CHECK (extraction_status IN ('pending', 'correct', 'wrong', 'needs_review')),
@@ -134,6 +117,14 @@ CREATE INDEX idx_extractions_created ON khatiyan_extractions(created_at DESC);
 
 -- Composite index for model comparison queries
 CREATE INDEX idx_extractions_comparison ON khatiyan_extractions(khatiyan_record_id, model_name, extraction_status);
+
+-- JSONB indexes for querying extracted data fields
+-- GIN index for general JSONB queries
+CREATE INDEX idx_extractions_data_gin ON khatiyan_extractions USING GIN (extraction_data);
+
+-- Specific B-tree indexes for commonly queried fields (optional, for better performance on exact matches)
+CREATE INDEX idx_extractions_district ON khatiyan_extractions ((extraction_data->>'district'));
+CREATE INDEX idx_extractions_khatiyan_number ON khatiyan_extractions ((extraction_data->>'khatiyan_number'));
 
 -- ============================================================================
 -- Table: prompt_optimizations (Optional - for future use)
@@ -200,6 +191,39 @@ FROM khatiyan_extractions
 GROUP BY model_provider, model_name, prompt_version
 ORDER BY accuracy_percentage DESC NULLS LAST;
 
+-- View: Flattened extraction data (for easier querying)
+-- This view extracts commonly used fields from the JSON for convenience
+CREATE VIEW extraction_details AS
+SELECT
+  ke.id,
+  ke.khatiyan_record_id,
+  kr.url,
+  kr.title,
+  ke.model_provider,
+  ke.model_name,
+  ke.prompt_version,
+
+  -- Extract commonly queried fields from JSON
+  ke.extraction_data->>'district' as district,
+  ke.extraction_data->>'tehsil' as tehsil,
+  ke.extraction_data->>'village' as village,
+  ke.extraction_data->>'khatiyan_number' as khatiyan_number,
+  ke.extraction_data->>'owner_name' as owner_name,
+  ke.extraction_data->>'father_name' as father_name,
+  ke.extraction_data->>'total_plots' as total_plots,
+  ke.extraction_data->>'total_area' as total_area,
+
+  -- Keep full JSON for additional fields
+  ke.extraction_data,
+
+  ke.extraction_status,
+  ke.confidence_score,
+  ke.extraction_time_ms,
+  ke.tokens_used,
+  ke.created_at
+FROM khatiyan_extractions ke
+JOIN khatiyan_records kr ON ke.khatiyan_record_id = kr.id;
+
 -- ============================================================================
 -- Helper Functions
 -- ============================================================================
@@ -231,8 +255,8 @@ CREATE TRIGGER update_khatiyan_extractions_updated_at
 -- Compare Claude vs other models on same record
 -- SELECT
 --   kr.url,
---   ke1.district as claude_district,
---   ke2.district as gpt4_district,
+--   ke1.extraction_data->>'district' as claude_district,
+--   ke2.extraction_data->>'district' as gpt4_district,
 --   ke1.extraction_status as claude_status,
 --   ke2.extraction_status as gpt4_status
 -- FROM khatiyan_records kr
@@ -240,10 +264,16 @@ CREATE TRIGGER update_khatiyan_extractions_updated_at
 --   AND ke1.model_name LIKE 'claude%'
 -- LEFT JOIN khatiyan_extractions ke2 ON kr.id = ke2.khatiyan_record_id
 --   AND ke2.model_name LIKE 'gpt%'
--- WHERE ke1.district != ke2.district;
+-- WHERE ke1.extraction_data->>'district' != ke2.extraction_data->>'district';
 
 -- Find records needing review
--- SELECT * FROM khatiyan_extractions
+-- SELECT
+--   id,
+--   extraction_data->>'khatiyan_number' as khatiyan_number,
+--   extraction_data->>'district' as district,
+--   model_name,
+--   created_at
+-- FROM khatiyan_extractions
 -- WHERE extraction_status = 'pending'
 -- ORDER BY created_at DESC
 -- LIMIT 10;
@@ -257,3 +287,21 @@ CREATE TRIGGER update_khatiyan_extractions_updated_at
 -- WHERE model_name = 'claude-3-5-sonnet-20241022'
 -- GROUP BY prompt_version
 -- ORDER BY prompt_version;
+
+-- Search for specific district or khatiyan number (uses GIN index)
+-- SELECT
+--   ke.id,
+--   kr.url,
+--   ke.extraction_data,
+--   ke.model_name,
+--   ke.created_at
+-- FROM khatiyan_extractions ke
+-- JOIN khatiyan_records kr ON ke.khatiyan_record_id = kr.id
+-- WHERE ke.extraction_data->>'district' = 'Khordha'
+--   OR ke.extraction_data->>'khatiyan_number' = '1234';
+
+-- Get all unique districts extracted
+-- SELECT DISTINCT extraction_data->>'district' as district
+-- FROM khatiyan_extractions
+-- WHERE extraction_data->>'district' IS NOT NULL
+-- ORDER BY district;
