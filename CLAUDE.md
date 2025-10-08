@@ -25,9 +25,15 @@ This is a Chrome extension with a FastAPI backend that enables chat-based intera
 
 ### Key Components
 
-- **SummarizationAgent** (api_server.py:41-146): Handles Claude API calls with fallback logic
-- **URL Whitelist** (api_server.py:149-156): Security restriction to Bhulekh URLs only
-- **In-memory Storage** (api_server.py:27): `page_contexts` dict - not production-ready
+- **DSPy Signatures** (api_server.py:66-100): Programmable prompts for extraction, explanation, Q&A
+  - `ExtractKhatiyan`: Extract district, tehsil, village, khatiyan_number
+  - `ExplainContent`: Generate simple explanations
+  - `AnswerQuestion`: Answer user questions
+  - `SummarizeContent`: Create summaries
+- **SummarizationAgent** (api_server.py:104-216): Handles all AI operations using DSPy
+- **Supabase Storage** (api_server.py:223-247): Stores extracted Khatiyan data
+- **URL Whitelist** (api_server.py:249-256): Security restriction to Bhulekh URLs only
+- **In-memory Storage** (api_server.py:27): `page_contexts` dict - for chat context only
 
 ## Development Commands
 
@@ -46,10 +52,43 @@ uv add <package-name>
 
 ### Environment Setup
 
-The API requires `ANTHROPIC_API_KEY` environment variable:
-- Create `.env` file in project root
-- Add: `ANTHROPIC_API_KEY=your_key_here`
-- Without this key, fallback responses are used (limited functionality)
+The API requires multiple environment variables:
+
+```bash
+# Create .env file in project root with:
+
+# Required for AI features
+ANTHROPIC_API_KEY=your_anthropic_key_here
+
+# Required for data storage (optional but recommended)
+SUPABASE_URL=https://your-project.supabase.co
+SUPABASE_KEY=your_supabase_anon_key
+```
+
+**Setting up Supabase:**
+1. Create account at https://supabase.com
+2. Create new project
+3. Go to Project Settings → API
+4. Copy `URL` and `anon/public` key
+5. Create table `khatiyan_records` with schema:
+   ```sql
+   CREATE TABLE khatiyan_records (
+     id BIGSERIAL PRIMARY KEY,
+     district TEXT,
+     tehsil TEXT,
+     village TEXT,
+     khatiyan_number TEXT,
+     claude_extract JSONB,
+     extraction_status TEXT CHECK (extraction_status IN ('correct', 'wrong')),
+     url TEXT,
+     title TEXT,
+     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+   );
+   ```
+
+**Without keys:**
+- `ANTHROPIC_API_KEY` missing: Fallback responses (limited functionality)
+- `SUPABASE_URL/KEY` missing: Data extraction still works, but not stored
 
 ### Chrome Extension Development
 
@@ -86,13 +125,48 @@ The API requires `ANTHROPIC_API_KEY` environment variable:
 - `fastapi`: Web framework
 - `uvicorn`: ASGI server
 - `anthropic`: Claude API client
+- `dspy-ai`: Programmable prompting framework
+- `supabase`: Supabase client for data storage
 - `python-dotenv`: Environment variable management
 - `pydantic`: Data validation (via FastAPI)
+
+## DSPy Prompt Engineering
+
+This project uses DSPy for programmable prompting, which enables:
+
+1. **Type-Safe Prompts**: Defined as signatures with input/output fields
+2. **Easy Iteration**: Modify prompts by changing signature descriptions
+3. **Composability**: Chain multiple prompts together
+4. **Future Optimization**: Use feedback data (extraction_status) to optimize prompts
+
+**Adding New Prompts:**
+```python
+# 1. Define signature
+class NewTask(dspy.Signature):
+    """Description of what this prompt does"""
+    input_field: str = dspy.InputField(desc="Input description")
+    output_field: str = dspy.OutputField(desc="Output description")
+
+# 2. Add to SummarizationAgent.__init__
+self.new_task = dspy.ChainOfThought(NewTask)
+
+# 3. Use it
+result = self.new_task(input_field="...")
+```
+
+**Optimizing Prompts Later:**
+```python
+# Collect feedback from extraction_status column
+# Use DSPy optimizers to improve extraction accuracy
+optimizer = dspy.BootstrapFewShot(metric=accuracy)
+optimized = optimizer.compile(extractor, trainset=feedback_data)
+```
 
 ## Production Considerations
 
 Current implementation is NOT production-ready:
-- In-memory storage (`page_contexts`) - needs database
-- CORS allows all origins - needs restriction
-- No authentication/rate limiting
+- In-memory storage (`page_contexts`) - for chat context only, needs Redis/DB for production
+- CORS allows all origins - needs restriction to extension origin
+- No authentication/rate limiting on API endpoints
 - No logging infrastructure
+- Supabase RLS (Row Level Security) not configured

@@ -200,3 +200,57 @@ h3 {
     background-color: var(--color-success-hover);
   }
 }
+
+/* ==================== Action Buttons ==================== */
+.action-buttons-container {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-sm);
+  margin: var(--spacing-md) 0;
+  padding: var(--spacing-md);
+  background-color: var(--color-gray-200);
+  border-radius: var(--radius-md);
+  justify-content: center;
+}
+
+.action-button {
+  padding: var(--spacing-sm) var(--spacing-lg);
+  background-color: white;
+  color: var(--color-gray-900);
+  border: 1px solid var(--color-gray-400);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+  transition: all 0.2s ease;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  white-space: nowrap;
+
+  &:hover {
+    background-color: var(--color-primary);
+    color: white;
+    border-color: var(--color-primary);
+    transform: translateY(-1px);
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  }
+
+  &:active {
+    transform: translateY(0);
+  }
+
+  &:disabled {
+    background-color: var(--color-gray-300);
+    color: var(--color-gray-500);
+    cursor: not-allowed;
+    transform: none;
+
+    &:hover {
+      background-color: var(--color-gray-300);
+      color: var(--color-gray-500);
+      border-color: var(--color-gray-400);
+      box-shadow: none;
+    }
+  }
+}

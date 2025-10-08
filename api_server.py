@@ -6,10 +6,10 @@ import os
 from anthropic import Anthropic
 from typing import Optional
 from dotenv import load_dotenv
+import dspy
+from supabase import create_client, Client
 
 # Load environment variables from .env file
-load_dotenv()
-from dotenv import load_dotenv
 load_dotenv()
 
 app = FastAPI(title="Webpage Content Chat API")
@@ -38,78 +38,125 @@ try:
 except Exception as e:
     print(f"❌ Error initializing Anthropic: {e}")
 
+# Initialize DSPy with Claude
+try:
+    if api_key:
+        # Configure DSPy to use Claude via Anthropic
+        claude_lm = dspy.LM('anthropic/claude-3-5-sonnet-20241022', api_key=api_key)
+        dspy.configure(lm=claude_lm)
+        print("✅ DSPy configured with Claude Sonnet")
+    else:
+        print("⚠️  DSPy not configured - ANTHROPIC_API_KEY missing")
+except Exception as e:
+    print(f"❌ Error initializing DSPy: {e}")
+
+# Initialize Supabase client
+supabase_client: Optional[Client] = None
+try:
+    supabase_url = os.getenv("SUPABASE_URL")
+    supabase_key = os.getenv("SUPABASE_KEY")
+    if supabase_url and supabase_key:
+        supabase_client = create_client(supabase_url, supabase_key)
+        print("✅ Supabase client initialized successfully")
+    else:
+        print("⚠️  SUPABASE_URL or SUPABASE_KEY not found. Data storage will be disabled.")
+except Exception as e:
+    print(f"❌ Error initializing Supabase: {e}")
+
+# ==================== DSPy Signatures ====================
+
+class ExtractKhatiyan(dspy.Signature):
+    """Extract structured Khatiyan land record details from Bhulekha webpage content.
+    Look for district, tehsil, village, and khatiyan number in both English and Hindi text."""
+
+    content: str = dspy.InputField(desc="The webpage text content")
+    title: str = dspy.InputField(desc="The webpage title")
+    district: str = dspy.OutputField(desc="The district (जिला) name")
+    tehsil: str = dspy.OutputField(desc="The tehsil/block (तहसील) name")
+    village: str = dspy.OutputField(desc="The village (गाँव) name")
+    khatiyan_number: str = dspy.OutputField(desc="The Khatiyan/Plot (खतियान) number")
+
+class ExplainContent(dspy.Signature):
+    """Provide a simple, easy-to-understand explanation of webpage content in plain English.
+    Explain what the page is about, its purpose, and key information in 2-3 sentences."""
+
+    content: str = dspy.InputField(desc="The webpage text content")
+    title: str = dspy.InputField(desc="The webpage title")
+    explanation: str = dspy.OutputField(desc="A simple explanation in plain English")
+
+class AnswerQuestion(dspy.Signature):
+    """Answer user questions about webpage content accurately based only on available information."""
+
+    content: str = dspy.InputField(desc="The webpage text content")
+    title: str = dspy.InputField(desc="The webpage title")
+    question: str = dspy.InputField(desc="The user's question")
+    answer: str = dspy.OutputField(desc="The answer based on the webpage content")
+
+class SummarizeContent(dspy.Signature):
+    """Provide a clear and concise summary of webpage content with key points."""
+
+    content: str = dspy.InputField(desc="The webpage text content")
+    title: str = dspy.InputField(desc="The webpage title")
+    summary: str = dspy.OutputField(desc="A concise summary with key points")
+
+# ==================== Agent Classes ====================
+
 class SummarizationAgent:
-    """Agent for summarizing webpage content using Claude Sonnet"""
-    
+    """Agent for summarizing webpage content using Claude Sonnet with DSPy"""
+
     def __init__(self, client: Optional[Anthropic] = None):
         self.client = client
         self.model = "claude-3-5-sonnet-20241022"
+
+        # Initialize DSPy modules
+        self.extractor = dspy.ChainOfThought(ExtractKhatiyan)
+        self.explainer = dspy.ChainOfThought(ExplainContent)
+        self.answerer = dspy.ChainOfThought(AnswerQuestion)
+        self.summarizer = dspy.ChainOfThought(SummarizeContent)
     
+    async def extract_khatiyan_details(self, content: str, title: str = "") -> dict:
+        """Extract Khatiyan details using DSPy"""
+        try:
+            result = self.extractor(content=content, title=title)
+            return {
+                "district": result.district or "Not found",
+                "tehsil": result.tehsil or "Not found",
+                "village": result.village or "Not found",
+                "khatiyan_number": result.khatiyan_number or "Not found"
+            }
+        except Exception as e:
+            print(f"Error extracting Khatiyan details with DSPy: {e}")
+            return {
+                "district": "Extraction failed",
+                "tehsil": "Extraction failed",
+                "village": "Extraction failed",
+                "khatiyan_number": "Extraction failed"
+            }
+
     async def summarize_content(self, content: str, title: str = "") -> str:
-        """Summarize webpage content using Claude Sonnet"""
+        """Summarize webpage content using DSPy"""
         if not self.client:
             return self._fallback_summary(content, title)
-        
+
         try:
-            prompt = f"""Please provide a clear and concise summary of the following webpage content.
+            result = self.summarizer(content=content, title=title)
+            return result.summary
 
-Title: {title}
-
-Content:
-{content}
-
-Please provide:
-1. A brief overview of what this page is about
-2. Key information or main points
-3. Any important details that users should know
-
-Keep the summary informative but concise."""
-
-            response = self.client.messages.create(
-                model=self.model,
-                max_tokens=1000,
-                temperature=0.3,
-                messages=[
-                    {"role": "user", "content": prompt}
-                ]
-            )
-            
-            return response.content[0].text
-            
         except Exception as e:
-            print(f"Error with Claude API: {e}")
+            print(f"Error with DSPy summarization: {e}")
             return self._fallback_summary(content, title)
     
     async def answer_question(self, content: str, title: str, question: str) -> str:
-        """Answer questions about webpage content using Claude Sonnet"""
+        """Answer questions about webpage content using DSPy"""
         if not self.client:
             return self._fallback_answer(content, question)
-        
+
         try:
-            prompt = f"""Based on the following webpage content, please answer the user's question accurately and helpfully.
+            result = self.answerer(content=content, title=title, question=question)
+            return result.answer
 
-Webpage Title: {title}
-
-Webpage Content:
-{content}
-
-User Question: {question}
-
-Please provide a clear, accurate answer based only on the information available in the webpage content. If the information isn't available in the content, please say so."""
-
-            response = self.client.messages.create(
-                model=self.model,
-                max_tokens=1000,
-                temperature=0.3,
-                messages=[
-                    {"role": "user", "content": prompt}
-                ]
-            )
-            
-            return response.content[0].text
-            
         except Exception as e:
-            print(f"Error with Claude API: {e}")
+            print(f"Error with DSPy answering: {e}")
             return self._fallback_answer(content, question)
     
     def _fallback_summary(self, content: str, title: str) -> str:
@@ -128,7 +175,7 @@ This page contains {word_count} words. Here's a preview of the content:
     def _fallback_answer(self, content: str, question: str) -> str:
         """Fallback answer when Claude is not available"""
         question_lower = question.lower()
-        
+
         if "summary" in question_lower or "summarize" in question_lower:
             return self._fallback_summary(content, "")
         elif "word count" in question_lower or "how many words" in question_lower:
@@ -142,8 +189,62 @@ This page contains {word_count} words. Here's a preview of the content:
         else:
             return "I can help you with basic questions about this page. For advanced AI-powered responses, please set the ANTHROPIC_API_KEY environment variable."
 
+    async def explain_content(self, content: str, title: str = "") -> str:
+        """Provide a simple, easy-to-understand explanation using DSPy"""
+        if not self.client:
+            return self._fallback_explanation(content, title)
+
+        try:
+            result = self.explainer(content=content, title=title)
+            return result.explanation
+
+        except Exception as e:
+            print(f"Error with DSPy explanation: {e}")
+            return self._fallback_explanation(content, title)
+
+    def _fallback_explanation(self, content: str, title: str) -> str:
+        """Fallback explanation when Claude is not available"""
+        word_count = len(content.split())
+        preview = content[:200] + "..." if len(content) > 200 else content
+
+        return f"""**About this page: {title}**
+
+This page contains {word_count} words. Here's a brief preview:
+
+{preview}
+
+*Note: For a detailed AI-powered explanation, please set the ANTHROPIC_API_KEY environment variable.*"""
+
 # Initialize the summarization agent
 summarization_agent = SummarizationAgent(anthropic_client)
+
+# ==================== Supabase Storage Functions ====================
+
+async def store_khatiyan_record(khatiyan_data: dict, url: str, title: str) -> bool:
+    """Store Khatiyan extraction data to Supabase"""
+    if not supabase_client:
+        print("⚠️  Supabase client not available - skipping data storage")
+        return False
+
+    try:
+        data = {
+            "district": khatiyan_data.get("district"),
+            "tehsil": khatiyan_data.get("tehsil"),
+            "village": khatiyan_data.get("village"),
+            "khatiyan_number": khatiyan_data.get("khatiyan_number"),
+            "claude_extract": khatiyan_data,  # Store full extraction as JSONB
+            "extraction_status": None,  # Will be updated via user feedback
+            "url": url,
+            "title": title
+        }
+
+        result = supabase_client.table("khatiyan_records").insert(data).execute()
+        print(f"✅ Stored Khatiyan record to Supabase: {khatiyan_data.get('khatiyan_number')}")
+        return True
+
+    except Exception as e:
+        print(f"❌ Error storing to Supabase: {e}")
+        return False
 
 # Define allowed URLs
 ALLOWED_URLS = [
@@ -250,6 +351,45 @@ async def chat_with_content(chat: ChatQuery):
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error processing chat: {str(e)}")
+
+@app.post("/explain")
+async def explain_content(webpage: WebpageContent):
+    """
+    Provide a simple explanation of the webpage content in English and extract Khatiyan details
+    """
+    try:
+        # Validate URL - only allow Bhulekh website
+        if not is_url_allowed(webpage.url):
+            allowed_urls_str = ", ".join(ALLOWED_URLS)
+            raise HTTPException(
+                status_code=403,
+                detail=f"Access denied. This service only works with these URLs: {allowed_urls_str}"
+            )
+
+        # Extract content
+        text_content = webpage.content.get('text', '')
+
+        # Extract Khatiyan details using DSPy
+        khatiyan_data = await summarization_agent.extract_khatiyan_details(text_content, webpage.title)
+        print(f"Extracted Khatiyan data: {khatiyan_data}")
+
+        # Store extracted data in Supabase
+        await store_khatiyan_record(khatiyan_data, webpage.url, webpage.title)
+
+        # Get simple explanation from Claude using DSPy
+        explanation = await summarization_agent.explain_content(text_content, webpage.title)
+
+        print(f"Generated explanation for: {webpage.url}")
+
+        return {
+            "explanation": explanation,
+            "khatiyan_data": khatiyan_data,
+            "url": webpage.url,
+            "title": webpage.title
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error generating explanation: {str(e)}")
 
 @app.post("/process-content")
 async def process_content(webpage: WebpageContent):
