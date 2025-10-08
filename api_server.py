@@ -371,6 +371,11 @@ class ChatQuery(BaseModel):
     url: str
     title: str
 
+class FeedbackRequest(BaseModel):
+    extraction_id: int
+    feedback: str  # 'correct' or 'wrong'
+    user_comment: Optional[str] = None
+
 @app.post("/load-content")
 async def load_content(webpage: WebpageContent):
     """
@@ -699,13 +704,65 @@ async def get_extraction(webpage: WebpageContent):
         return {
             "status": "success",
             "data": formatted_data,
-            "url": webpage.url
+            "url": webpage.url,
+            "extraction_id": extraction.get("id")  # Include extraction_id for feedback
         }
 
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error retrieving extraction: {str(e)}")
+
+@app.post("/submit-feedback")
+async def submit_feedback(feedback: FeedbackRequest):
+    """
+    Submit user feedback on extraction quality (thumbs up/down)
+    Stores feedback in user_feedback column with timestamp
+    """
+    try:
+        if not supabase_client:
+            raise HTTPException(
+                status_code=503,
+                detail="Database not available. Please configure Supabase connection."
+            )
+
+        # Validate feedback value
+        if feedback.feedback not in ['correct', 'wrong']:
+            raise HTTPException(
+                status_code=400,
+                detail="Feedback must be 'correct' or 'wrong'"
+            )
+
+        # Update the extraction record - store in user_feedback, not extraction_status
+        update_data = {
+            "user_feedback": feedback.feedback,
+            "feedback_timestamp": "NOW()"
+        }
+
+        # Add optional user comment if provided
+        if feedback.user_comment:
+            update_data["user_feedback"] = f"{feedback.feedback}: {feedback.user_comment}"
+
+        result = supabase_client.table("khatiyan_extractions")\
+            .update(update_data)\
+            .eq("id", feedback.extraction_id)\
+            .execute()
+
+        if not result.data:
+            raise HTTPException(
+                status_code=404,
+                detail="Extraction not found"
+            )
+
+        return {
+            "status": "success",
+            "message": f"Feedback recorded as '{feedback.feedback}'"
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error submitting feedback: {str(e)}")
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)

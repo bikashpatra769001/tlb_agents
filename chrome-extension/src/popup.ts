@@ -64,6 +64,7 @@ interface ExtractionResponse {
   status: string;
   data: ExtractionData;
   url: string;
+  extraction_id: number;
 }
 
 // Constants
@@ -145,7 +146,7 @@ function scrollToBottom(): void {
   chatMessages.scrollTop = chatMessages.scrollHeight;
 }
 
-function displayExtractionData(data: ExtractionData): void {
+function displayExtractionData(data: ExtractionData, extractionId: number): void {
   const container = document.createElement('div');
   container.className = 'extraction-display';
 
@@ -196,7 +197,31 @@ function displayExtractionData(data: ExtractionData): void {
   html += '</div>';
 
   container.innerHTML = html;
+
+  // Add feedback buttons
+  const feedbackContainer = document.createElement('div');
+  feedbackContainer.className = 'feedback-container';
+  feedbackContainer.innerHTML = `
+    <div class="feedback-prompt">Is this extraction accurate?</div>
+    <div class="feedback-buttons">
+      <button class="feedback-btn thumbs-up" data-extraction-id="${extractionId}" data-feedback="correct">
+        👍 Correct
+      </button>
+      <button class="feedback-btn thumbs-down" data-extraction-id="${extractionId}" data-feedback="wrong">
+        👎 Wrong
+      </button>
+    </div>
+  `;
+
+  container.appendChild(feedbackContainer);
   chatMessages.appendChild(container);
+
+  // Add event listeners to feedback buttons
+  const feedbackButtons = feedbackContainer.querySelectorAll('.feedback-btn') as NodeListOf<HTMLButtonElement>;
+  feedbackButtons.forEach(button => {
+    button.addEventListener('click', handleFeedbackClick);
+  });
+
   scrollToBottom();
 }
 
@@ -264,6 +289,54 @@ function getPageContent(): PageContent {
     text: document.body.innerText || document.body.textContent || '',
     html: document.documentElement.outerHTML
   };
+}
+
+// Feedback handler
+async function handleFeedbackClick(event: Event): Promise<void> {
+  const button = event.currentTarget as HTMLButtonElement;
+  const extractionId = parseInt(button.dataset.extractionId || '0');
+  const feedback = button.dataset.feedback as string;
+
+  if (!extractionId) {
+    addSystemMessage('❌ Error: Extraction ID not found');
+    return;
+  }
+
+  try {
+    // Disable all feedback buttons
+    const allFeedbackButtons = document.querySelectorAll('.feedback-btn') as NodeListOf<HTMLButtonElement>;
+    allFeedbackButtons.forEach(btn => btn.disabled = true);
+
+    const response = await fetch('http://localhost:8000/submit-feedback', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        extraction_id: extractionId,
+        feedback: feedback
+      })
+    });
+
+    if (response.ok) {
+      const result = await response.json();
+      addSystemMessage(`✅ ${result.message}. Thank you for your feedback!`);
+
+      // Update button appearance to show which was clicked
+      button.classList.add('selected');
+      button.textContent = feedback === 'correct' ? '✓ Marked Correct' : '✗ Marked Wrong';
+    } else {
+      throw new Error(`HTTP ${response.status}`);
+    }
+
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    addSystemMessage(`❌ Error submitting feedback: ${errorMessage}`);
+
+    // Re-enable buttons on error
+    const allFeedbackButtons = document.querySelectorAll('.feedback-btn') as NodeListOf<HTMLButtonElement>;
+    allFeedbackButtons.forEach(btn => btn.disabled = false);
+  }
 }
 
 // Event Handlers
@@ -372,7 +445,7 @@ async function handleExtractDetails(): Promise<void> {
     if (response.ok) {
       const result: ExtractionResponse = await response.json();
       addSystemMessage('✅ Extraction data loaded successfully!');
-      displayExtractionData(result.data);
+      displayExtractionData(result.data, result.extraction_id);
     } else if (response.status === 404) {
       addSystemMessage('❌ No extraction found for this page. Please click "Help me understand" first to extract data.');
     } else if (response.status === 503) {
