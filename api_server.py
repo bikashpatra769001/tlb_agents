@@ -66,15 +66,32 @@ except Exception as e:
 # ==================== DSPy Signatures ====================
 
 class ExtractKhatiyan(dspy.Signature):
-    """Extract structured Khatiyan land record details from Bhulekha webpage content.
-    Look for district, tehsil, village, and khatiyan number in both English and Hindi text."""
+    """Extract ALL structured Khatiyan land record details from Bhulekha webpage content.
+    Extract ALL information including district, tehsil, village, khatiyan number, owner details, plots, and any special comments.
+    IMPORTANT: Translate all Indic language text to English. All output fields must contain ONLY English text, not Odia or other Indic scripts."""
 
     content: str = dspy.InputField(desc="The webpage text content")
     title: str = dspy.InputField(desc="The webpage title")
-    district: str = dspy.OutputField(desc="The district (जिला) name")
-    tehsil: str = dspy.OutputField(desc="The tehsil/block (तहसील) name")
-    village: str = dspy.OutputField(desc="The village (गाँव) name")
-    khatiyan_number: str = dspy.OutputField(desc="The Khatiyan/Plot (खतियान) number")
+
+    # Location information (in English)
+    district: str = dspy.OutputField(desc="The district (ଜିଲ୍ଲା) name in ENGLISH only")
+    tehsil: str = dspy.OutputField(desc="The tehsil/block (ତହସିଲ) name in ENGLISH only")
+    village: str = dspy.OutputField(desc="The village (ମୌଜା) name in ENGLISH only")
+    khatiyan_number: str = dspy.OutputField(desc="The Khatiyan/Plot (ଖତିୟାନର କ୍ରମିକ ନମ୍ବର) number")
+
+    # Owner information (in English)
+    owner_name: str = dspy.OutputField(desc="The primary owner/tenant name (ରୟତ/ଭୂସ୍ୱାମୀ) in ENGLISH only, transliterated from Odia if needed")
+    father_name: str = dspy.OutputField(desc="The owner's father name (ପିତାଙ୍କ ନାମ) in ENGLISH only, transliterated from Odia if needed")
+
+    # Plot information
+    total_plots: str = dspy.OutputField(desc="Total number of plots/land parcels mentioned")
+    plot_numbers: str = dspy.OutputField(desc="All plot numbers listed, comma-separated if multiple")
+    total_area: str = dspy.OutputField(desc="Total land area with units (acres/decimals/etc)")
+
+    # Additional details (in English)
+    land_type: str = dspy.OutputField(desc="Type of land (agricultural/residential/etc) in ENGLISH only")
+    special_comments: str = dspy.OutputField(desc="Any special remarks, comments, or notes in ENGLISH only, transliterated from Odia if needed")
+    other_owners: str = dspy.OutputField(desc="Names of co-owners or other people mentioned, if any, in ENGLISH only")
 
 class ExplainContent(dspy.Signature):
     """Provide a simple, easy-to-understand explanation of webpage content in plain English.
@@ -119,10 +136,25 @@ class SummarizationAgent:
         try:
             result = self.extractor(content=content, title=title)
             return {
+                # Location information
                 "district": result.district or "Not found",
                 "tehsil": result.tehsil or "Not found",
                 "village": result.village or "Not found",
-                "khatiyan_number": result.khatiyan_number or "Not found"
+                "khatiyan_number": result.khatiyan_number or "Not found",
+
+                # Owner information
+                "owner_name": result.owner_name or "Not found",
+                "father_name": result.father_name or "Not found",
+
+                # Plot information
+                "total_plots": result.total_plots or "Not found",
+                "plot_numbers": result.plot_numbers or "Not found",
+                "total_area": result.total_area or "Not found",
+
+                # Additional details
+                "land_type": result.land_type or "Not found",
+                "special_comments": result.special_comments or "Not found",
+                "other_owners": result.other_owners or "Not found"
             }
         except Exception as e:
             print(f"Error extracting Khatiyan details with DSPy: {e}")
@@ -130,7 +162,15 @@ class SummarizationAgent:
                 "district": "Extraction failed",
                 "tehsil": "Extraction failed",
                 "village": "Extraction failed",
-                "khatiyan_number": "Extraction failed"
+                "khatiyan_number": "Extraction failed",
+                "owner_name": "Extraction failed",
+                "father_name": "Extraction failed",
+                "total_plots": "Extraction failed",
+                "plot_numbers": "Extraction failed",
+                "total_area": "Extraction failed",
+                "land_type": "Extraction failed",
+                "special_comments": "Extraction failed",
+                "other_owners": "Extraction failed"
             }
 
     async def summarize_content(self, content: str, title: str = "") -> str:
@@ -279,10 +319,27 @@ async def store_khatiyan_extraction(
             "model_provider": model_provider,
             "model_name": model_name,
             "prompt_version": prompt_version,
+
+            # Location information
             "district": extraction_data.get("district"),
             "tehsil": extraction_data.get("tehsil"),
             "village": extraction_data.get("village"),
             "khatiyan_number": extraction_data.get("khatiyan_number"),
+
+            # Owner information
+            "owner_name": extraction_data.get("owner_name"),
+            "father_name": extraction_data.get("father_name"),
+
+            # Plot information
+            "total_plots": extraction_data.get("total_plots"),
+            "plot_numbers": extraction_data.get("plot_numbers"),
+            "total_area": extraction_data.get("total_area"),
+
+            # Additional details
+            "land_type": extraction_data.get("land_type"),
+            "special_comments": extraction_data.get("special_comments"),
+            "other_owners": extraction_data.get("other_owners"),
+
             "extraction_data": extraction_data,  # Full extraction as JSONB
             "extraction_status": "pending",  # Will be updated via user feedback
             "extraction_time_ms": extraction_time_ms,
@@ -407,6 +464,7 @@ async def chat_with_content(chat: ChatQuery):
 async def explain_content(webpage: WebpageContent):
     """
     Provide a simple explanation of the webpage content in English and extract Khatiyan details
+    Uses cached data if available to avoid redundant API calls
     """
     import time
 
@@ -423,35 +481,79 @@ async def explain_content(webpage: WebpageContent):
         text_content = webpage.content.get('text', '')
         html_content = webpage.content.get('html', '')
 
-        # Create or get khatiyan_record
-        record_id = await get_or_create_khatiyan_record(
-            url=webpage.url,
-            title=webpage.title,
-            raw_content=text_content,
-            raw_html=html_content
-        )
+        # Check for existing cached extraction first
+        cached_extraction = None
+        cached_explanation = None
+        record_id = None
 
-        # Extract Khatiyan details using DSPy (with timing)
-        extraction_start = time.time()
-        khatiyan_data = await summarization_agent.extract_khatiyan_details(text_content, webpage.title)
-        extraction_time_ms = int((time.time() - extraction_start) * 1000)
+        if supabase_client:
+            try:
+                # Look for existing record by URL
+                record_result = supabase_client.table("khatiyan_records")\
+                    .select("id")\
+                    .eq("url", webpage.url)\
+                    .order("created_at", desc=True)\
+                    .limit(1)\
+                    .execute()
 
-        print(f"Extracted Khatiyan data in {extraction_time_ms}ms: {khatiyan_data}")
+                if record_result.data and len(record_result.data) > 0:
+                    record_id = record_result.data[0]["id"]
 
-        # Store extraction to Supabase (if record was created)
-        if record_id:
-            await store_khatiyan_extraction(
-                khatiyan_record_id=record_id,
-                extraction_data=khatiyan_data,
-                model_provider="anthropic",
-                model_name="claude-3-5-sonnet-20241022",
-                prompt_version="v1",  # Increment this when you optimize DSPy prompts
-                extraction_time_ms=extraction_time_ms,
-                tokens_used=None  # Could be tracked from Anthropic API response if needed
-            )
+                    # Check for recent extraction (within 24 hours)
+                    extraction_result = supabase_client.table("khatiyan_extractions")\
+                        .select("extraction_data, created_at")\
+                        .eq("khatiyan_record_id", record_id)\
+                        .eq("model_name", "claude-3-5-sonnet-20241022")\
+                        .eq("prompt_version", "v1")\
+                        .gte("created_at", "now() - interval '24 hours'")\
+                        .order("created_at", desc=True)\
+                        .limit(1)\
+                        .execute()
 
-        # Get simple explanation from Claude using DSPy
-        explanation = await summarization_agent.explain_content(text_content, webpage.title)
+                    if extraction_result.data and len(extraction_result.data) > 0:
+                        cached_extraction = extraction_result.data[0]["extraction_data"]
+                        print(f"✅ Using cached extraction from database (created: {extraction_result.data[0]['created_at']})")
+            except Exception as e:
+                print(f"⚠️  Error checking cache: {e}")
+
+        # If we have cached data, use it; otherwise call Claude
+        if cached_extraction:
+            khatiyan_data = cached_extraction
+            extraction_time_ms = 0  # Cache hit - no API call
+
+            # Still generate explanation (lightweight operation)
+            explanation = await summarization_agent.explain_content(text_content, webpage.title)
+        else:
+            # No cache - create/get record and call Claude
+            if not record_id:
+                record_id = await get_or_create_khatiyan_record(
+                    url=webpage.url,
+                    title=webpage.title,
+                    raw_content=text_content,
+                    raw_html=html_content
+                )
+
+            # Extract Khatiyan details using DSPy (with timing)
+            extraction_start = time.time()
+            khatiyan_data = await summarization_agent.extract_khatiyan_details(text_content, webpage.title)
+            extraction_time_ms = int((time.time() - extraction_start) * 1000)
+
+            print(f"🔍 Extracted Khatiyan data in {extraction_time_ms}ms: {khatiyan_data}")
+
+            # Store extraction to Supabase (if record was created)
+            if record_id:
+                await store_khatiyan_extraction(
+                    khatiyan_record_id=record_id,
+                    extraction_data=khatiyan_data,
+                    model_provider="anthropic",
+                    model_name="claude-3-5-sonnet-20241022",
+                    prompt_version="v1",  # Increment this when you optimize DSPy prompts
+                    extraction_time_ms=extraction_time_ms,
+                    tokens_used=None  # Could be tracked from Anthropic API response if needed
+                )
+
+            # Get simple explanation from Claude using DSPy
+            explanation = await summarization_agent.explain_content(text_content, webpage.title)
 
         print(f"Generated explanation for: {webpage.url}")
 
@@ -460,7 +562,8 @@ async def explain_content(webpage: WebpageContent):
             "khatiyan_data": khatiyan_data,
             "url": webpage.url,
             "title": webpage.title,
-            "record_id": record_id
+            "record_id": record_id,
+            "cached": cached_extraction is not None
         }
 
     except Exception as e:
@@ -480,6 +583,98 @@ async def root():
 @app.get("/health")
 async def health_check():
     return {"status": "healthy"}
+
+@app.post("/get-extraction")
+async def get_extraction(webpage: WebpageContent):
+    """
+    Get the latest extraction data for a given URL from the database
+    """
+    try:
+        # Validate URL - only allow Bhulekh website
+        if not is_url_allowed(webpage.url):
+            allowed_urls_str = ", ".join(ALLOWED_URLS)
+            raise HTTPException(
+                status_code=403,
+                detail=f"Access denied. This service only works with these URLs: {allowed_urls_str}"
+            )
+
+        if not supabase_client:
+            raise HTTPException(
+                status_code=503,
+                detail="Database not available. Please configure Supabase connection."
+            )
+
+        # Find the khatiyan_record for this URL
+        record_result = supabase_client.table("khatiyan_records")\
+            .select("id")\
+            .eq("url", webpage.url)\
+            .order("created_at", desc=True)\
+            .limit(1)\
+            .execute()
+
+        if not record_result.data or len(record_result.data) == 0:
+            raise HTTPException(
+                status_code=404,
+                detail="No extraction found for this page. Please load the page content first using 'Help me understand' button."
+            )
+
+        record_id = record_result.data[0]["id"]
+
+        # Get the latest extraction for this record
+        extraction_result = supabase_client.table("khatiyan_extractions")\
+            .select("*")\
+            .eq("khatiyan_record_id", record_id)\
+            .order("created_at", desc=True)\
+            .limit(1)\
+            .execute()
+
+        if not extraction_result.data or len(extraction_result.data) == 0:
+            raise HTTPException(
+                status_code=404,
+                detail="No extraction data found for this page."
+            )
+
+        extraction = extraction_result.data[0]
+
+        # Format the extraction data for display
+        formatted_data = {
+            "location": {
+                "district": extraction.get("district"),
+                "tehsil": extraction.get("tehsil"),
+                "village": extraction.get("village"),
+                "khatiyan_number": extraction.get("khatiyan_number")
+            },
+            "owner_details": {
+                "owner_name": extraction.get("owner_name"),
+                "father_name": extraction.get("father_name"),
+                "other_owners": extraction.get("other_owners")
+            },
+            "plot_information": {
+                "total_plots": extraction.get("total_plots"),
+                "plot_numbers": extraction.get("plot_numbers"),
+                "total_area": extraction.get("total_area"),
+                "land_type": extraction.get("land_type")
+            },
+            "additional_info": {
+                "special_comments": extraction.get("special_comments")
+            },
+            "metadata": {
+                "model_name": extraction.get("model_name"),
+                "extraction_time_ms": extraction.get("extraction_time_ms"),
+                "created_at": extraction.get("created_at")
+            }
+        }
+
+        return {
+            "status": "success",
+            "data": formatted_data,
+            "url": webpage.url
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error retrieving extraction: {str(e)}")
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)
