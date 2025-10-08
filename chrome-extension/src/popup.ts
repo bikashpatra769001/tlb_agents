@@ -41,6 +41,7 @@ interface ExtractionData {
   owner_details: {
     owner_name: string;
     father_name: string;
+    caste: string;
     other_owners: string;
   };
   plot_information: {
@@ -164,6 +165,9 @@ function displayExtractionData(data: ExtractionData): void {
   html += '<table class="extraction-table">';
   html += `<tr><td><strong>Owner Name:</strong></td><td>${data.owner_details.owner_name || 'N/A'}</td></tr>`;
   html += `<tr><td><strong>Father\'s Name:</strong></td><td>${data.owner_details.father_name || 'N/A'}</td></tr>`;
+  if (data.owner_details.caste && data.owner_details.caste !== 'Not found') {
+    html += `<tr><td><strong>Caste:</strong></td><td>${data.owner_details.caste}</td></tr>`;
+  }
   if (data.owner_details.other_owners && data.owner_details.other_owners !== 'Not found') {
     html += `<tr><td><strong>Other Owners:</strong></td><td>${data.owner_details.other_owners}</td></tr>`;
   }

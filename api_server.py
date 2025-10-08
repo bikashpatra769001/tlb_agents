@@ -82,6 +82,7 @@ class ExtractKhatiyan(dspy.Signature):
     # Owner information (in English)
     owner_name: str = dspy.OutputField(desc="The primary owner/tenant name (ରୟତ/ଭୂସ୍ୱାମୀ) in ENGLISH only, transliterated from Odia if needed")
     father_name: str = dspy.OutputField(desc="The owner's father name (ପିତାଙ୍କ ନାମ) in ENGLISH only, transliterated from Odia if needed")
+    caste: str = dspy.OutputField(desc="The owner's caste/category (ଜାତି) in ENGLISH only, transliterated from Odia if needed")
 
     # Plot information
     total_plots: str = dspy.OutputField(desc="Total number of plots/land parcels mentioned")
@@ -145,6 +146,7 @@ class SummarizationAgent:
                 # Owner information
                 "owner_name": result.owner_name or "Not found",
                 "father_name": result.father_name or "Not found",
+                "caste": result.caste or "Not found",
 
                 # Plot information
                 "total_plots": result.total_plots or "Not found",
@@ -165,6 +167,7 @@ class SummarizationAgent:
                 "khatiyan_number": "Extraction failed",
                 "owner_name": "Extraction failed",
                 "father_name": "Extraction failed",
+                "caste": "Extraction failed",
                 "total_plots": "Extraction failed",
                 "plot_numbers": "Extraction failed",
                 "total_area": "Extraction failed",
@@ -627,6 +630,7 @@ async def get_extraction(webpage: WebpageContent):
             "owner_details": {
                 "owner_name": extraction_data.get("owner_name"),
                 "father_name": extraction_data.get("father_name"),
+                "caste": extraction_data.get("caste"),
                 "other_owners": extraction_data.get("other_owners")
             },
             "plot_information": {
