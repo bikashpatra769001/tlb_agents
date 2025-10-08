@@ -596,8 +596,8 @@ async def health_check():
 @app.post("/get-extraction")
 async def get_extraction(webpage: WebpageContent):
     """
-    Get the latest extraction data for a given URL and content hash from the database
-    Matches by content hash to ensure we get the correct extraction for the current page state
+    Get the latest extraction data for the given page by first extracting its identifiers
+    and looking up by (district, tehsil, village, khatiyan_number)
     """
     try:
         # Validate URL - only allow Bhulekh website
@@ -614,37 +614,40 @@ async def get_extraction(webpage: WebpageContent):
                 detail="Database not available. Please configure Supabase connection."
             )
 
-        # Extract content for hash matching
+        # Extract content to identify the khatiyan
         text_content = webpage.content.get('text', '')
 
-        # Import hashlib for content hash calculation
-        import hashlib
-        content_hash = hashlib.sha256(text_content.encode()).hexdigest()
+        # Extract khatiyan identifiers from the current page
+        khatiyan_data = await summarization_agent.extract_khatiyan_details(text_content, webpage.title)
 
-        # Find the khatiyan_record for this URL and content hash
-        # First try exact content_hash match
+        district = khatiyan_data.get("district", "")
+        tehsil = khatiyan_data.get("tehsil", "")
+        village = khatiyan_data.get("village", "")
+        khatiyan_number = khatiyan_data.get("khatiyan_number", "")
+
+        if not district or not tehsil or not village or not khatiyan_number:
+            raise HTTPException(
+                status_code=404,
+                detail="Could not extract location identifiers from the page. Please ensure this is a valid Khatiyan page."
+            )
+
+        # Find the khatiyan_record by unique identifiers
         record_result = supabase_client.table("khatiyan_records")\
-            .select("id, raw_content")\
-            .eq("url", webpage.url)\
-            .order("created_at", desc=True)\
+            .select("id")\
+            .eq("district", district)\
+            .eq("tehsil", tehsil)\
+            .eq("village", village)\
+            .eq("khatiyan_number", khatiyan_number)\
+            .limit(1)\
             .execute()
 
-        # Match by content hash (calculate hash on the fly since it's not stored)
-        matching_record = None
-        for record in record_result.data if record_result.data else []:
-            stored_content = record.get("raw_content", "")
-            stored_hash = hashlib.sha256(stored_content.encode()).hexdigest()
-            if stored_hash == content_hash:
-                matching_record = record
-                break
-
-        if not matching_record:
+        if not record_result.data or len(record_result.data) == 0:
             raise HTTPException(
                 status_code=404,
                 detail="No extraction found for this page. Please load the page content first using 'Help me understand' button."
             )
 
-        record_id = matching_record["id"]
+        record_id = record_result.data[0]["id"]
 
         # Get the latest extraction for this record
         extraction_result = supabase_client.table("khatiyan_extractions")\
