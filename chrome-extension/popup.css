@@ -1,0 +1,202 @@
+/* ==================== CSS Variables ==================== */
+:root {
+  /* Colors */
+  --color-primary: #007bff;
+  --color-primary-hover: #0056b3;
+  --color-success: #28a745;
+  --color-success-hover: #218838;
+  --color-warning: #fff3cd;
+  --color-warning-text: #856404;
+
+  /* Grays */
+  --color-gray-100: #f9f9f9;
+  --color-gray-200: #f8f9fa;
+  --color-gray-300: #e9ecef;
+  --color-gray-400: #dee2e6;
+  --color-gray-500: #6c757d;
+  --color-gray-600: #495057;
+  --color-gray-900: #333;
+
+  /* Spacing */
+  --spacing-xs: 4px;
+  --spacing-sm: 8px;
+  --spacing-md: 10px;
+  --spacing-lg: 12px;
+  --spacing-xl: 15px;
+
+  /* Border Radius */
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 20px;
+
+  /* Dimensions */
+  --popup-width: 400px;
+  --popup-height: 500px;
+  --chat-min-height: 200px;
+  --chat-max-height: 300px;
+
+  /* Typography */
+  --font-family: Arial, sans-serif;
+  --font-size-xs: 11px;
+  --font-size-sm: 12px;
+  --font-size-base: 14px;
+}
+
+/* ==================== Base Styles ==================== */
+body {
+  width: var(--popup-width);
+  height: var(--popup-height);
+  padding: var(--spacing-xl);
+  font-family: var(--font-family);
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+h3 {
+  margin: 0 0 var(--spacing-xl) 0;
+  color: var(--color-gray-900);
+  text-align: center;
+}
+
+/* ==================== Chat Container ==================== */
+#chatContainer {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--color-gray-400);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+#chatMessages {
+  flex: 1;
+  padding: var(--spacing-md);
+  overflow-y: auto;
+  background-color: var(--color-gray-100);
+  min-height: var(--chat-min-height);
+  max-height: var(--chat-max-height);
+}
+
+/* ==================== Message Styles ==================== */
+.message {
+  margin-bottom: var(--spacing-md);
+  padding: var(--spacing-sm) var(--spacing-lg);
+  border-radius: var(--radius-lg);
+  max-width: 80%;
+  word-wrap: break-word;
+}
+
+.user-message {
+  background-color: var(--color-primary);
+  color: white;
+  margin-left: auto;
+  text-align: right;
+}
+
+.bot-message {
+  background-color: var(--color-gray-300);
+  color: var(--color-gray-900);
+  margin-right: auto;
+}
+
+.system-message {
+  background-color: var(--color-warning);
+  color: var(--color-warning-text);
+  text-align: center;
+  font-size: var(--font-size-sm);
+  margin: 5px auto;
+}
+
+/* ==================== Content Message Styles ==================== */
+.content-message {
+  background-color: var(--color-gray-200);
+  border: 1px solid var(--color-gray-400);
+  color: var(--color-gray-900);
+  margin: var(--spacing-md) auto;
+  max-width: 95%;
+
+  & .content-header {
+    background-color: var(--color-gray-300);
+    padding: var(--spacing-sm) var(--spacing-lg);
+    border-bottom: 1px solid var(--color-gray-400);
+    font-size: var(--font-size-base);
+  }
+
+  & .content-stats {
+    font-size: var(--font-size-xs);
+    color: var(--color-gray-500);
+    margin-top: var(--spacing-xs);
+  }
+
+  & .content-preview {
+    padding: var(--spacing-md) var(--spacing-lg);
+    font-size: var(--font-size-sm);
+    line-height: 1.4;
+    color: var(--color-gray-600);
+    max-height: 120px;
+    overflow-y: auto;
+    white-space: pre-wrap;
+  }
+}
+
+/* ==================== Input Container ==================== */
+#inputContainer {
+  display: flex;
+  padding: var(--spacing-md);
+  background-color: white;
+  border-top: 1px solid var(--color-gray-400);
+}
+
+#queryInput {
+  flex: 1;
+  padding: var(--spacing-sm) var(--spacing-lg);
+  border: 1px solid var(--color-gray-400);
+  border-radius: var(--radius-xl);
+  outline: none;
+  resize: none;
+  font-family: var(--font-family);
+
+  &:focus {
+    border-color: var(--color-primary);
+  }
+}
+
+/* ==================== Buttons ==================== */
+#sendButton {
+  margin-left: var(--spacing-sm);
+  padding: var(--spacing-sm) 16px;
+  background-color: var(--color-primary);
+  color: white;
+  border: none;
+  border-radius: var(--radius-xl);
+  cursor: pointer;
+  font-size: var(--font-size-base);
+  transition: background-color 0.2s ease;
+
+  &:hover {
+    background-color: var(--color-primary-hover);
+  }
+
+  &:disabled {
+    background-color: var(--color-gray-500);
+    cursor: not-allowed;
+  }
+}
+
+#readContentBtn {
+  margin-bottom: var(--spacing-md);
+  padding: var(--spacing-sm) 16px;
+  background-color: var(--color-success);
+  color: white;
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: var(--font-size-sm);
+  transition: background-color 0.2s ease;
+
+  &:hover {
+    background-color: var(--color-success-hover);
+  }
+}
