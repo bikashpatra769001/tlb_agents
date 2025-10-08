@@ -345,6 +345,16 @@ async function handleExtractDetails(): Promise<void> {
     }
 
     extractDetailsBtn.disabled = true;
+    addSystemMessage('📊 Reading current page content...');
+
+    // Read current page content to match exact page state
+    const results = await chrome.scripting.executeScript({
+      target: { tabId: currentTab.id! },
+      func: getPageContent
+    });
+
+    const currentPageContent = results[0].result as PageContent;
+
     addSystemMessage('📊 Fetching extracted details from database...');
 
     const response = await fetch('http://localhost:8000/get-extraction', {
@@ -355,7 +365,7 @@ async function handleExtractDetails(): Promise<void> {
       body: JSON.stringify({
         url: currentTab.url,
         title: currentTab.title,
-        content: { text: '', html: '' } // Not needed for this endpoint, but required by type
+        content: currentPageContent // Send actual page content for hash matching
       } as LoadContentRequest)
     });
 

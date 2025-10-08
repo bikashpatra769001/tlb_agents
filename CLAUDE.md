@@ -43,8 +43,10 @@ This is a Chrome extension with a FastAPI backend that enables chat-based intera
 The application uses a **two-table design** for extensibility:
 
 1. **khatiyan_records**: Stores raw page content once
-   - Deduplication by URL
-   - One record per unique page visit
+   - Deduplication by (district, tehsil, village, khatiyan_number) combination
+   - Khatiyan numbers are only unique within a specific district/tehsil/village
+   - One record per unique khatiyan (reused if same khatiyan viewed multiple times)
+   - URL field removed as it doesn't change across different records
 
 2. **khatiyan_extractions**: Stores AI model outputs
    - Multiple extractions per record (different models/prompts)
@@ -99,7 +101,7 @@ SUPABASE_KEY=your_supabase_anon_key
    - Execute to create tables, indexes, views, and triggers
 
 **Schema Overview:**
-- `khatiyan_records`: Stores unique page content (one per URL visit)
+- `khatiyan_records`: Stores unique page content (one per unique district/tehsil/village/khatiyan_number)
 - `khatiyan_extractions`: Stores AI model extractions (many per record)
 - `prompt_optimizations`: Tracks DSPy optimization experiments (optional)
 - Views for model comparison and accuracy tracking

@@ -263,30 +263,45 @@ summarization_agent = SummarizationAgent(anthropic_client)
 
 # ==================== Supabase Storage Functions ====================
 
-async def get_or_create_khatiyan_record(url: str, title: str, raw_content: str, raw_html: str = None) -> Optional[int]:
-    """Get existing or create new khatiyan_record and return its ID"""
+async def get_or_create_khatiyan_record(
+    district: str,
+    tehsil: str,
+    village: str,
+    khatiyan_number: str,
+    title: str,
+    raw_content: str,
+    raw_html: str = None
+) -> Optional[int]:
+    """Get existing or create new khatiyan_record and return its ID
+
+    Deduplication is based on (district, tehsil, village, khatiyan_number) combination.
+    """
     if not supabase_client:
         print("⚠️  Supabase client not available - skipping data storage")
         return None
 
     try:
-        # Try to find existing record by URL (from recent time window to avoid duplicates)
-        # Note: In production, you might want more sophisticated deduplication
+        # Try to find existing record by unique key (district, tehsil, village, khatiyan_number)
         result = supabase_client.table("khatiyan_records")\
             .select("id")\
-            .eq("url", url)\
-            .order("created_at", desc=True)\
+            .eq("district", district)\
+            .eq("tehsil", tehsil)\
+            .eq("village", village)\
+            .eq("khatiyan_number", khatiyan_number)\
             .limit(1)\
             .execute()
 
         if result.data and len(result.data) > 0:
             record_id = result.data[0]["id"]
-            print(f"📌 Found existing khatiyan_record: {record_id}")
+            print(f"📌 Found existing khatiyan_record: {record_id} for {district}/{tehsil}/{village}/{khatiyan_number}")
             return record_id
 
         # Create new record
         data = {
-            "url": url,
+            "district": district,
+            "tehsil": tehsil,
+            "village": village,
+            "khatiyan_number": khatiyan_number,
             "title": title,
             "raw_content": raw_content,
             "raw_html": raw_html
@@ -294,7 +309,7 @@ async def get_or_create_khatiyan_record(url: str, title: str, raw_content: str, 
 
         result = supabase_client.table("khatiyan_records").insert(data).execute()
         record_id = result.data[0]["id"]
-        print(f"✅ Created new khatiyan_record: {record_id}")
+        print(f"✅ Created new khatiyan_record: {record_id} for {district}/{tehsil}/{village}/{khatiyan_number}")
         return record_id
 
     except Exception as e:
@@ -468,74 +483,86 @@ async def explain_content(webpage: WebpageContent):
         cached_explanation = None
         record_id = None
 
-        if supabase_client:
+        # First, extract Khatiyan details to get unique identifiers
+        extraction_start = time.time()
+        khatiyan_data = await summarization_agent.extract_khatiyan_details(text_content, webpage.title)
+        extraction_time_ms = int((time.time() - extraction_start) * 1000)
+        print(f"🔍 Extracted Khatiyan data in {extraction_time_ms}ms: {khatiyan_data}")
+
+        # Now check if we have this record in database
+        if supabase_client and khatiyan_data:
             try:
-                # Look for existing record by URL
-                record_result = supabase_client.table("khatiyan_records")\
-                    .select("id")\
-                    .eq("url", webpage.url)\
-                    .order("created_at", desc=True)\
-                    .limit(1)\
-                    .execute()
+                district = khatiyan_data.get("district", "")
+                tehsil = khatiyan_data.get("tehsil", "")
+                village = khatiyan_data.get("village", "")
+                khatiyan_number = khatiyan_data.get("khatiyan_number", "")
 
-                if record_result.data and len(record_result.data) > 0:
-                    record_id = record_result.data[0]["id"]
-
-                    # Check for recent extraction (within 24 hours)
-                    extraction_result = supabase_client.table("khatiyan_extractions")\
-                        .select("extraction_data, created_at")\
-                        .eq("khatiyan_record_id", record_id)\
-                        .eq("model_name", "claude-3-5-sonnet-20241022")\
-                        .eq("prompt_version", "v1")\
-                        .gte("created_at", "now() - interval '24 hours'")\
-                        .order("created_at", desc=True)\
+                if district and tehsil and village and khatiyan_number:
+                    # Look for existing record by unique key
+                    record_result = supabase_client.table("khatiyan_records")\
+                        .select("id")\
+                        .eq("district", district)\
+                        .eq("tehsil", tehsil)\
+                        .eq("village", village)\
+                        .eq("khatiyan_number", khatiyan_number)\
                         .limit(1)\
                         .execute()
 
-                    if extraction_result.data and len(extraction_result.data) > 0:
-                        cached_extraction = extraction_result.data[0]["extraction_data"]
-                        print(f"✅ Using cached extraction from database (created: {extraction_result.data[0]['created_at']})")
+                    if record_result.data and len(record_result.data) > 0:
+                        record_id = record_result.data[0]["id"]
+                        print(f"📌 Found existing record {record_id} for {district}/{tehsil}/{village}/{khatiyan_number}")
+
+                        # Check for recent extraction (within 24 hours) to avoid re-extraction
+                        extraction_result = supabase_client.table("khatiyan_extractions")\
+                            .select("extraction_data, created_at")\
+                            .eq("khatiyan_record_id", record_id)\
+                            .eq("model_name", "claude-3-5-sonnet-20241022")\
+                            .eq("prompt_version", "v1")\
+                            .gte("created_at", "now() - interval '24 hours'")\
+                            .order("created_at", desc=True)\
+                            .limit(1)\
+                            .execute()
+
+                        if extraction_result.data and len(extraction_result.data) > 0:
+                            cached_extraction = extraction_result.data[0]["extraction_data"]
+                            print(f"✅ Using cached extraction from database (created: {extraction_result.data[0]['created_at']})")
+                            khatiyan_data = cached_extraction
+                            extraction_time_ms = 0  # Cache hit - overwrite with 0
             except Exception as e:
                 print(f"⚠️  Error checking cache: {e}")
 
-        # If we have cached data, use it; otherwise call Claude
-        if cached_extraction:
-            khatiyan_data = cached_extraction
-            extraction_time_ms = 0  # Cache hit - no API call
+        # Create/get record if we don't have it yet and have valid data
+        if not record_id and khatiyan_data and supabase_client:
+            district = khatiyan_data.get("district", "")
+            tehsil = khatiyan_data.get("tehsil", "")
+            village = khatiyan_data.get("village", "")
+            khatiyan_number = khatiyan_data.get("khatiyan_number", "")
 
-            # Still generate explanation (lightweight operation)
-            explanation = await summarization_agent.explain_content(text_content, webpage.title)
-        else:
-            # No cache - create/get record and call Claude
-            if not record_id:
+            if district and tehsil and village and khatiyan_number:
                 record_id = await get_or_create_khatiyan_record(
-                    url=webpage.url,
+                    district=district,
+                    tehsil=tehsil,
+                    village=village,
+                    khatiyan_number=khatiyan_number,
                     title=webpage.title,
                     raw_content=text_content,
                     raw_html=html_content
                 )
 
-            # Extract Khatiyan details using DSPy (with timing)
-            extraction_start = time.time()
-            khatiyan_data = await summarization_agent.extract_khatiyan_details(text_content, webpage.title)
-            extraction_time_ms = int((time.time() - extraction_start) * 1000)
+        # Store extraction to Supabase (if not cached and record exists)
+        if record_id and not cached_extraction:
+            await store_khatiyan_extraction(
+                khatiyan_record_id=record_id,
+                extraction_data=khatiyan_data,
+                model_provider="anthropic",
+                model_name="claude-3-5-sonnet-20241022",
+                prompt_version="v1",  # Increment this when you optimize DSPy prompts
+                extraction_time_ms=extraction_time_ms,
+                tokens_used=None  # Could be tracked from Anthropic API response if needed
+            )
 
-            print(f"🔍 Extracted Khatiyan data in {extraction_time_ms}ms: {khatiyan_data}")
-
-            # Store extraction to Supabase (if record was created)
-            if record_id:
-                await store_khatiyan_extraction(
-                    khatiyan_record_id=record_id,
-                    extraction_data=khatiyan_data,
-                    model_provider="anthropic",
-                    model_name="claude-3-5-sonnet-20241022",
-                    prompt_version="v1",  # Increment this when you optimize DSPy prompts
-                    extraction_time_ms=extraction_time_ms,
-                    tokens_used=None  # Could be tracked from Anthropic API response if needed
-                )
-
-            # Get simple explanation from Claude using DSPy
-            explanation = await summarization_agent.explain_content(text_content, webpage.title)
+        # Get simple explanation from Claude using DSPy
+        explanation = await summarization_agent.explain_content(text_content, webpage.title)
 
         print(f"Generated explanation for: {webpage.url}")
 
@@ -569,7 +596,8 @@ async def health_check():
 @app.post("/get-extraction")
 async def get_extraction(webpage: WebpageContent):
     """
-    Get the latest extraction data for a given URL from the database
+    Get the latest extraction data for a given URL and content hash from the database
+    Matches by content hash to ensure we get the correct extraction for the current page state
     """
     try:
         # Validate URL - only allow Bhulekh website
@@ -586,21 +614,37 @@ async def get_extraction(webpage: WebpageContent):
                 detail="Database not available. Please configure Supabase connection."
             )
 
-        # Find the khatiyan_record for this URL
+        # Extract content for hash matching
+        text_content = webpage.content.get('text', '')
+
+        # Import hashlib for content hash calculation
+        import hashlib
+        content_hash = hashlib.sha256(text_content.encode()).hexdigest()
+
+        # Find the khatiyan_record for this URL and content hash
+        # First try exact content_hash match
         record_result = supabase_client.table("khatiyan_records")\
-            .select("id")\
+            .select("id, raw_content")\
             .eq("url", webpage.url)\
             .order("created_at", desc=True)\
-            .limit(1)\
             .execute()
 
-        if not record_result.data or len(record_result.data) == 0:
+        # Match by content hash (calculate hash on the fly since it's not stored)
+        matching_record = None
+        for record in record_result.data if record_result.data else []:
+            stored_content = record.get("raw_content", "")
+            stored_hash = hashlib.sha256(stored_content.encode()).hexdigest()
+            if stored_hash == content_hash:
+                matching_record = record
+                break
+
+        if not matching_record:
             raise HTTPException(
                 status_code=404,
                 detail="No extraction found for this page. Please load the page content first using 'Help me understand' button."
             )
 
-        record_id = record_result.data[0]["id"]
+        record_id = matching_record["id"]
 
         # Get the latest extraction for this record
         extraction_result = supabase_client.table("khatiyan_extractions")\

@@ -37,13 +37,18 @@ DROP TABLE IF EXISTS khatiyan_records CASCADE;
 -- Table: khatiyan_records
 -- ============================================================================
 -- Stores unique Bhulekh webpage records with raw content
--- One record per unique URL/page visit
+-- One record per unique (district, tehsil, village, khatiyan_number) combination
 
 CREATE TABLE khatiyan_records (
   id BIGSERIAL PRIMARY KEY,
 
-  -- Page identification
-  url TEXT NOT NULL,
+  -- Khatiyan identification (unique key components)
+  district TEXT NOT NULL,
+  tehsil TEXT NOT NULL,
+  village TEXT NOT NULL,
+  khatiyan_number TEXT NOT NULL,
+
+  -- Page metadata
   title TEXT,
 
   -- Raw content (stored once for all extractions)
@@ -54,12 +59,13 @@ CREATE TABLE khatiyan_records (
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
 
-  -- Ensure we don't duplicate the same page content
-  CONSTRAINT unique_url_content UNIQUE(url, created_at)
+  -- Ensure we don't duplicate the same khatiyan record
+  -- Khatiyan number is unique only within a specific district/tehsil/village combination
+  CONSTRAINT unique_khatiyan UNIQUE(district, tehsil, village, khatiyan_number)
 );
 
--- Index for looking up existing records by URL
-CREATE INDEX idx_khatiyan_records_url ON khatiyan_records(url);
+-- Index for looking up existing records by location
+CREATE INDEX idx_khatiyan_records_location ON khatiyan_records(district, tehsil, village);
 CREATE INDEX idx_khatiyan_records_created ON khatiyan_records(created_at DESC);
 
 -- ============================================================================
@@ -164,7 +170,10 @@ CREATE TABLE prompt_optimizations (
 CREATE VIEW latest_extractions AS
 SELECT DISTINCT ON (khatiyan_record_id, model_name)
   ke.*,
-  kr.url,
+  kr.district,
+  kr.tehsil,
+  kr.village,
+  kr.khatiyan_number,
   kr.title
 FROM khatiyan_extractions ke
 JOIN khatiyan_records kr ON ke.khatiyan_record_id = kr.id
@@ -197,17 +206,20 @@ CREATE VIEW extraction_details AS
 SELECT
   ke.id,
   ke.khatiyan_record_id,
-  kr.url,
+  kr.district as record_district,
+  kr.tehsil as record_tehsil,
+  kr.village as record_village,
+  kr.khatiyan_number as record_khatiyan_number,
   kr.title,
   ke.model_provider,
   ke.model_name,
   ke.prompt_version,
 
   -- Extract commonly queried fields from JSON
-  ke.extraction_data->>'district' as district,
-  ke.extraction_data->>'tehsil' as tehsil,
-  ke.extraction_data->>'village' as village,
-  ke.extraction_data->>'khatiyan_number' as khatiyan_number,
+  ke.extraction_data->>'district' as extracted_district,
+  ke.extraction_data->>'tehsil' as extracted_tehsil,
+  ke.extraction_data->>'village' as extracted_village,
+  ke.extraction_data->>'khatiyan_number' as extracted_khatiyan_number,
   ke.extraction_data->>'owner_name' as owner_name,
   ke.extraction_data->>'father_name' as father_name,
   ke.extraction_data->>'total_plots' as total_plots,
@@ -254,7 +266,7 @@ CREATE TRIGGER update_khatiyan_extractions_updated_at
 
 -- Compare Claude vs other models on same record
 -- SELECT
---   kr.url,
+--   kr.district, kr.tehsil, kr.village, kr.khatiyan_number,
 --   ke1.extraction_data->>'district' as claude_district,
 --   ke2.extraction_data->>'district' as gpt4_district,
 --   ke1.extraction_status as claude_status,
@@ -291,14 +303,14 @@ CREATE TRIGGER update_khatiyan_extractions_updated_at
 -- Search for specific district or khatiyan number (uses GIN index)
 -- SELECT
 --   ke.id,
---   kr.url,
+--   kr.district, kr.tehsil, kr.village, kr.khatiyan_number,
 --   ke.extraction_data,
 --   ke.model_name,
 --   ke.created_at
 -- FROM khatiyan_extractions ke
 -- JOIN khatiyan_records kr ON ke.khatiyan_record_id = kr.id
--- WHERE ke.extraction_data->>'district' = 'Khordha'
---   OR ke.extraction_data->>'khatiyan_number' = '1234';
+-- WHERE kr.district = 'Khordha'
+--   OR kr.khatiyan_number = '1234';
 
 -- Get all unique districts extracted
 -- SELECT DISTINCT extraction_data->>'district' as district
