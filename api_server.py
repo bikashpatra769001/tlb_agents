@@ -63,6 +63,19 @@ try:
 except Exception as e:
     print(f"❌ Error initializing Supabase: {e}")
 
+# ==================== Load RoR Summary Prompt ====================
+
+# Load RoR summary prompt from file
+ROR_SUMMARY_PROMPT = None
+try:
+    prompt_path = os.path.join(os.path.dirname(__file__), "prompts", "ror_summary.txt")
+    with open(prompt_path, 'r', encoding='utf-8') as f:
+        ROR_SUMMARY_PROMPT = f.read().strip()
+    print("✅ Loaded RoR summary prompt from prompts/ror_summary.txt")
+except Exception as e:
+    print(f"⚠️  Could not load RoR summary prompt: {e}")
+    ROR_SUMMARY_PROMPT = "You are a land document expert. Analyze the RoR document and provide a detailed summary."
+
 # ==================== DSPy Signatures ====================
 
 class ExtractKhatiyan(dspy.Signature):
@@ -117,6 +130,29 @@ class SummarizeContent(dspy.Signature):
     title: str = dspy.InputField(desc="The webpage title")
     summary: str = dspy.OutputField(desc="A concise summary with key points")
 
+class SummarizeRoR(dspy.Signature):
+    """You are a land document expert for the state of Odisha.
+    Provide comprehensive RoR (Record of Rights) analysis with risk assessment, plot details,
+    ownership information, and actionable next steps."""
+
+    ror_content: str = dspy.InputField(desc="The complete Record of Rights (RoR) webpage text content")
+    title: str = dspy.InputField(desc="The RoR webpage title")
+
+    html_summary: str = dspy.OutputField(
+        desc="Complete HTML formatted summary with: 1) Color-coded safety score section at top "
+             "(red background for score < 5, yellow for 5-7, light green for > 8), "
+             "2) Plot details section with size in acres/sqft, plot numbers, and land use type, "
+             "3) Ownership details section with owner name, father's name, caste, and owner type "
+             "(Government/Private Citizen/Corporate), "
+             "4) Risk/Safety section with bullet points explaining the risk rating, "
+             "5) Next steps section with recommendations. "
+             "HTML should be well-formatted with proper spacing, bolding, and highlighting of important information."
+    )
+
+# Set the loaded RoR prompt as the signature's docstring
+if ROR_SUMMARY_PROMPT:
+    SummarizeRoR.__doc__ = ROR_SUMMARY_PROMPT
+
 # ==================== Agent Classes ====================
 
 class SummarizationAgent:
@@ -131,6 +167,7 @@ class SummarizationAgent:
         self.explainer = dspy.ChainOfThought(ExplainContent)
         self.answerer = dspy.ChainOfThought(AnswerQuestion)
         self.summarizer = dspy.ChainOfThought(SummarizeContent)
+        self.ror_summarizer = dspy.ChainOfThought(SummarizeRoR)
     
     async def extract_khatiyan_details(self, content: str, title: str = "") -> dict:
         """Extract Khatiyan details using DSPy"""
@@ -257,6 +294,51 @@ This page contains {word_count} words. Here's a brief preview:
 {preview}
 
 *Note: For a detailed AI-powered explanation, please set the ANTHROPIC_API_KEY environment variable.*"""
+
+    async def summarize_ror_document(self, content: str, title: str = "") -> str:
+        """Generate comprehensive RoR summary with risk assessment and HTML formatting
+
+        Uses the detailed RoR summary prompt from prompts/ror_summary.txt to:
+        - Analyze plot details and ownership
+        - Calculate safety score (1-10)
+        - Identify risks (govt ownership, public land use, corporate ownership)
+        - Provide color-coded HTML output
+        - Suggest next steps
+        """
+        if not self.client:
+            return self._fallback_ror_summary(content, title)
+
+        try:
+            result = self.ror_summarizer(ror_content=content, title=title)
+            return result.html_summary
+
+        except Exception as e:
+            print(f"Error with DSPy RoR summarization: {e}")
+            return self._fallback_ror_summary(content, title)
+
+    def _fallback_ror_summary(self, content: str, title: str) -> str:
+        """Fallback RoR summary when Claude is not available"""
+        word_count = len(content.split())
+        preview = content[:500] + "..." if len(content) > 500 else content
+
+        return f"""<div style="padding: 20px; font-family: Arial, sans-serif;">
+    <div style="background-color: #FFC107; padding: 15px; margin-bottom: 20px; border-radius: 5px;">
+        <h2 style="margin: 0 0 10px 0;">⚠️ AI Analysis Unavailable</h2>
+        <p style="margin: 0;"><strong>Safety Score: Not Available</strong></p>
+    </div>
+
+    <h3>Document Preview</h3>
+    <p><strong>Title:</strong> {title}</p>
+    <p><strong>Content Length:</strong> {word_count} words</p>
+    <div style="background-color: #f5f5f5; padding: 15px; border-radius: 5px; margin: 15px 0;">
+        <p style="margin: 0;">{preview}</p>
+    </div>
+
+    <div style="background-color: #FFF3CD; padding: 15px; margin-top: 20px; border-radius: 5px;">
+        <p style="margin: 0;"><strong>Note:</strong> AI-powered RoR analysis requires ANTHROPIC_API_KEY.
+        Please configure your API key to get detailed risk assessment, plot analysis, and recommendations.</p>
+    </div>
+</div>"""
 
 # Initialize the summarization agent
 summarization_agent = SummarizationAgent(anthropic_client)
@@ -763,6 +845,60 @@ async def submit_feedback(feedback: FeedbackRequest):
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error submitting feedback: {str(e)}")
+
+@app.post("/summarize")
+async def summarize_page(webpage: WebpageContent):
+    """
+    Generate comprehensive RoR summary with risk assessment
+
+    Returns HTML-formatted summary with:
+    - Safety score (1-10) with color-coded background
+    - Plot details (size, type, numbers)
+    - Ownership analysis (govt/corporate/citizen classification)
+    - Risk assessment with reasoning
+    - Recommended next steps
+    """
+    import time
+
+    try:
+        # Validate URL - only allow Bhulekh website
+        if not is_url_allowed(webpage.url):
+            allowed_urls_str = ", ".join(ALLOWED_URLS)
+            raise HTTPException(
+                status_code=403,
+                detail=f"Access denied. This service only works with these URLs: {allowed_urls_str}"
+            )
+
+        # Extract content
+        text_content = webpage.content.get('text', '')
+        html_content = webpage.content.get('html', '')
+
+        # Generate RoR summary using DSPy
+        summary_start = time.time()
+        html_summary = await summarization_agent.summarize_ror_document(
+            text_content,
+            webpage.title
+        )
+        summary_time_ms = int((time.time() - summary_start) * 1000)
+
+        print(f"📝 Generated RoR summary in {summary_time_ms}ms for: {webpage.url}")
+
+        # Optional: Store summary in database for caching
+        # (Can implement later with a ror_summaries table)
+
+        return {
+            "status": "success",
+            "url": webpage.url,
+            "title": webpage.title,
+            "html_summary": html_summary,
+            "generation_time_ms": summary_time_ms
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"❌ Error generating RoR summary: {e}")
+        raise HTTPException(status_code=500, detail=f"Error generating summary: {str(e)}")
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)

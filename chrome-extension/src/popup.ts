@@ -246,23 +246,60 @@ function displayActionButtons(): void {
           throw new Error('No active tab found');
         }
 
-        const response = await fetch('http://localhost:8000/chat', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            query: action.query,
-            url: currentTab.url,
-            title: currentTab.title
-          } as ChatRequest)
-        });
+        // Use /summarize endpoint for summarize button, /chat for others
+        if (action.id === 'summarize') {
+          // Read current page content for summarization
+          const results = await chrome.scripting.executeScript({
+            target: { tabId: currentTab.id! },
+            func: getPageContent
+          });
 
-        if (response.ok) {
-          const result: ChatResponse = await response.json();
-          addBotMessage(result.response);
+          const currentPageContent = results[0].result as PageContent;
+
+          const response = await fetch('http://localhost:8000/summarize', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              url: currentTab.url,
+              title: currentTab.title,
+              content: currentPageContent
+            } as LoadContentRequest)
+          });
+
+          if (response.ok) {
+            const result = await response.json();
+
+            // Display HTML summary
+            const summaryContainer = document.createElement('div');
+            summaryContainer.className = 'message bot-message html-summary';
+            summaryContainer.innerHTML = result.html_summary;
+            chatMessages.appendChild(summaryContainer);
+            scrollToBottom();
+          } else {
+            throw new Error(`HTTP ${response.status}`);
+          }
         } else {
-          throw new Error(`HTTP ${response.status}`);
+          // Use /chat endpoint for other action buttons
+          const response = await fetch('http://localhost:8000/chat', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              query: action.query,
+              url: currentTab.url,
+              title: currentTab.title
+            } as ChatRequest)
+          });
+
+          if (response.ok) {
+            const result: ChatResponse = await response.json();
+            addBotMessage(result.response);
+          } else {
+            throw new Error(`HTTP ${response.status}`);
+          }
         }
 
       } catch (error) {
