@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import uvicorn
@@ -14,17 +14,34 @@ load_dotenv()
 
 app = FastAPI(title="Webpage Content Chat API")
 
+# Determine environment and configure CORS
+ENVIRONMENT = os.getenv("ENVIRONMENT", "development")
+CHROME_EXTENSION_ID = os.getenv("CHROME_EXTENSION_ID", "")
+
+if ENVIRONMENT == "production" and CHROME_EXTENSION_ID:
+    # Support multiple extension IDs (comma-separated) for beta testing
+    extension_ids = [id.strip() for id in CHROME_EXTENSION_ID.split(",") if id.strip()]
+    allowed_origins = [f"chrome-extension://{ext_id}" for ext_id in extension_ids]
+    print(f"🔒 Production mode - CORS restricted to {len(extension_ids)} extension(s):")
+    for origin in allowed_origins:
+        print(f"   - {origin}")
+else:
+    # Allow all for development
+    allowed_origins = ["*"]
+    print("⚠️  Development mode - CORS allows all origins")
+
 # Enable CORS for Chrome extension
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # In production, specify your extension's origin
+    allow_origins=allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Store page content in memory (in production, use a proper database)
-page_contexts = {}
+# NOTE: page_contexts moved to Supabase for Lambda persistence
+# The in-memory dictionary has been replaced with store_page_context() and get_page_context()
+# See functions around line 438 for Supabase-backed storage implementation
 
 # Initialize Anthropic client
 anthropic_client = None
@@ -433,6 +450,66 @@ async def store_khatiyan_extraction(
         print(f"❌ Error storing extraction: {e}")
         return False
 
+# ==================== Page Context Storage Functions ====================
+
+async def store_page_context(url: str, title: str, text: str, html: str = None) -> bool:
+    """Store page context in Supabase for Lambda persistence"""
+    if not supabase_client:
+        print("⚠️  Supabase client not available - skipping page context storage")
+        return False
+
+    try:
+        data = {
+            "url": url,
+            "title": title,
+            "text_content": text,
+            "html_content": html,
+            "word_count": len(text.split()),
+            "char_count": len(text),
+            "last_accessed": "NOW()"
+        }
+
+        # Upsert: update if exists (based on unique url constraint), insert if new
+        result = supabase_client.table("page_contexts")\
+            .upsert(data, on_conflict="url")\
+            .execute()
+
+        print(f"✅ Stored page context for: {url}")
+        return True
+    except Exception as e:
+        print(f"❌ Error storing page context: {e}")
+        return False
+
+
+async def get_page_context(url: str) -> Optional[dict]:
+    """Retrieve page context from Supabase"""
+    if not supabase_client:
+        print("⚠️  Supabase client not available - cannot retrieve page context")
+        return None
+
+    try:
+        result = supabase_client.table("page_contexts")\
+            .select("*")\
+            .eq("url", url)\
+            .limit(1)\
+            .execute()
+
+        if result.data and len(result.data) > 0:
+            # Update last_accessed timestamp
+            supabase_client.table("page_contexts")\
+                .update({"last_accessed": "NOW()"})\
+                .eq("url", url)\
+                .execute()
+
+            print(f"📖 Retrieved page context for: {url}")
+            return result.data[0]
+
+        print(f"⚠️  No page context found for: {url}")
+        return None
+    except Exception as e:
+        print(f"❌ Error retrieving page context: {e}")
+        return None
+
 # Define allowed URLs
 ALLOWED_URLS = [
     "https://bhulekh.ori.nic.in/SRoRFront_Uni.aspx",
@@ -442,6 +519,10 @@ ALLOWED_URLS = [
 def is_url_allowed(url: str) -> bool:
     """Check if the URL is in the allowed list"""
     return any(url.startswith(allowed_url) for allowed_url in ALLOWED_URLS)
+
+def get_tester_id(request: Request) -> str:
+    """Extract tester ID from request headers"""
+    return request.headers.get("X-Tester-ID", "anonymous")
 
 class WebpageContent(BaseModel):
     url: str
@@ -459,93 +540,111 @@ class FeedbackRequest(BaseModel):
     user_comment: Optional[str] = None
 
 @app.post("/load-content")
-async def load_content(webpage: WebpageContent):
+async def load_content(webpage: WebpageContent, request: Request):
     """
     Load webpage content and store it for chat context
     """
     try:
+        tester_id = get_tester_id(request)
+        print(f"📥 [Tester: {tester_id}] /load-content from {webpage.url}")
         # Validate URL - only allow Bhulekh website
         if not is_url_allowed(webpage.url):
             allowed_urls_str = ", ".join(ALLOWED_URLS)
             raise HTTPException(
-                status_code=403, 
+                status_code=403,
                 detail=f"Access denied. This service only works with these URLs: {allowed_urls_str}"
             )
-        
+
         # Extract content
         text_content = webpage.content.get('text', '')
         html_content = webpage.content.get('html', '')
-        
-        # Store content for this URL
-        page_contexts[webpage.url] = {
-            "title": webpage.title,
-            "text": text_content,
-            "html": html_content,
-            "word_count": len(text_content.split()),
-            "char_count": len(text_content)
-        }
-        
+
+        # Store content in Supabase for Lambda persistence
+        success = await store_page_context(
+            url=webpage.url,
+            title=webpage.title,
+            text=text_content,
+            html=html_content
+        )
+
+        if not success:
+            raise HTTPException(
+                status_code=500,
+                detail="Failed to store page content. Please ensure Supabase is configured."
+            )
+
         print(f"Loaded content from: {webpage.url}")
         print(f"Title: {webpage.title}")
         print(f"Word count: {len(text_content.split())}")
-        
+
         return {
             "status": "success",
             "message": "Content loaded successfully",
             "word_count": len(text_content.split())
         }
-        
+
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error loading content: {str(e)}")
 
 @app.post("/chat")
-async def chat_with_content(chat: ChatQuery):
+async def chat_with_content(chat: ChatQuery, request: Request):
     """
     Process chat queries about the loaded webpage content
     """
     try:
+        tester_id = get_tester_id(request)
+        print(f"💬 [Tester: {tester_id}] /chat query: {chat.query[:50]}...")
         # Validate URL - only allow Bhulekh website
         if not is_url_allowed(chat.url):
             allowed_urls_str = ", ".join(ALLOWED_URLS)
             raise HTTPException(
-                status_code=403, 
+                status_code=403,
                 detail=f"Access denied. This service only works with these URLs: {allowed_urls_str}"
             )
-        
-        # Get stored content for this URL
-        if chat.url not in page_contexts:
-            raise HTTPException(status_code=404, detail="Page content not loaded. Please load the page first.")
-        
-        page_data = page_contexts[chat.url]
-        text_content = page_data["text"]
-        
+
+        # Get stored content from Supabase
+        page_data = await get_page_context(chat.url)
+
+        if not page_data:
+            raise HTTPException(
+                status_code=404,
+                detail="Page content not loaded. Please load the page first."
+            )
+
+        text_content = page_data["text_content"]
+        page_title = page_data["title"]
+
         # Use AI-powered responses with Claude Sonnet
         query_lower = chat.query.lower()
-        
+
         # Check for summary requests
         if "summary" in query_lower or "summarize" in query_lower:
-            response = await summarization_agent.summarize_content(text_content, page_data['title'])
+            response = await summarization_agent.summarize_content(text_content, page_title)
         else:
             # Use Claude to answer general questions about the content
             response = await summarization_agent.answer_question(
-                text_content, 
-                page_data['title'], 
+                text_content,
+                page_title,
                 chat.query
             )
-        
+
         print(f"Chat query from {chat.url}: {chat.query}")
-        
+
         return {
             "response": response,
             "query": chat.query,
             "url": chat.url
         }
-        
+
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error processing chat: {str(e)}")
 
 @app.post("/explain")
-async def explain_content(webpage: WebpageContent):
+async def explain_content(webpage: WebpageContent, request: Request):
     """
     Provide a simple explanation of the webpage content in English and extract Khatiyan details
     Uses cached data if available to avoid redundant API calls
@@ -553,6 +652,8 @@ async def explain_content(webpage: WebpageContent):
     import time
 
     try:
+        tester_id = get_tester_id(request)
+        print(f"💡 [Tester: {tester_id}] /explain for {webpage.url}")
         # Validate URL - only allow Bhulekh website
         if not is_url_allowed(webpage.url):
             allowed_urls_str = ", ".join(ALLOWED_URLS)
@@ -681,12 +782,14 @@ async def health_check():
     return {"status": "healthy"}
 
 @app.post("/get-extraction")
-async def get_extraction(webpage: WebpageContent):
+async def get_extraction(webpage: WebpageContent, request: Request):
     """
     Get the latest extraction data for the given page by first extracting its identifiers
     and looking up by (district, tehsil, village, khatiyan_number)
     """
     try:
+        tester_id = get_tester_id(request)
+        print(f"📊 [Tester: {tester_id}] /get-extraction for {webpage.url}")
         # Validate URL - only allow Bhulekh website
         if not is_url_allowed(webpage.url):
             allowed_urls_str = ", ".join(ALLOWED_URLS)
@@ -796,12 +899,14 @@ async def get_extraction(webpage: WebpageContent):
         raise HTTPException(status_code=500, detail=f"Error retrieving extraction: {str(e)}")
 
 @app.post("/submit-feedback")
-async def submit_feedback(feedback: FeedbackRequest):
+async def submit_feedback(feedback: FeedbackRequest, request: Request):
     """
     Submit user feedback on extraction quality (thumbs up/down)
     Stores feedback in user_feedback column with timestamp
     """
     try:
+        tester_id = get_tester_id(request)
+        print(f"👍👎 [Tester: {tester_id}] /submit-feedback: {feedback.feedback} for extraction {feedback.extraction_id}")
         if not supabase_client:
             raise HTTPException(
                 status_code=503,
@@ -847,7 +952,7 @@ async def submit_feedback(feedback: FeedbackRequest):
         raise HTTPException(status_code=500, detail=f"Error submitting feedback: {str(e)}")
 
 @app.post("/summarize")
-async def summarize_page(webpage: WebpageContent):
+async def summarize_page(webpage: WebpageContent, request: Request):
     """
     Generate comprehensive RoR summary with risk assessment
 
@@ -861,6 +966,8 @@ async def summarize_page(webpage: WebpageContent):
     import time
 
     try:
+        tester_id = get_tester_id(request)
+        print(f"📝 [Tester: {tester_id}] /summarize for {webpage.url}")
         # Validate URL - only allow Bhulekh website
         if not is_url_allowed(webpage.url):
             allowed_urls_str = ", ".join(ALLOWED_URLS)
@@ -900,5 +1007,18 @@ async def summarize_page(webpage: WebpageContent):
         print(f"❌ Error generating RoR summary: {e}")
         raise HTTPException(status_code=500, detail=f"Error generating summary: {str(e)}")
 
+# ==================== Lambda Handler ====================
+
+# Import Mangum for AWS Lambda compatibility
+try:
+    from mangum import Mangum
+    # Create Lambda handler with lifespan="off" to avoid startup/shutdown issues
+    handler = Mangum(app, lifespan="off")
+    print("✅ Lambda handler configured with Mangum")
+except ImportError:
+    print("⚠️  Mangum not installed - Lambda deployment not available")
+    handler = None
+
+# For local development, keep the uvicorn runner
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)

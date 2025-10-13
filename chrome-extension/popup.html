@@ -7,8 +7,19 @@
   <link rel="stylesheet" href="popup.css">
 </head>
 <body>
+  <!-- Tester Setup Modal -->
+  <div id="testerSetupModal" class="modal" style="display: none;">
+    <div class="modal-content">
+      <h3>Welcome, Beta Tester!</h3>
+      <p>Please enter your tester ID to help us track usage and feedback.</p>
+      <input type="text" id="testerIdInput" placeholder="Enter your name or ID (e.g., Tester_Alice)" />
+      <p class="tester-note">Examples: Tester_Alice, John_Doe, Beta_User_1</p>
+      <button id="saveTesterIdBtn">Save & Continue</button>
+    </div>
+  </div>
+
   <h3>Bhulekh Chat Assistant</h3>
-  
+
   <button id="readContentBtn">Help me understand</button>
   <button id="extractDetailsBtn">Extract Details</button>
 

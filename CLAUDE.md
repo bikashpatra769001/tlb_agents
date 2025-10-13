@@ -6,6 +6,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 This is a Chrome extension with a FastAPI backend that enables chat-based interaction with Bhulekh website content (https://bhulekh.ori.nic.in). The system extracts webpage content and uses Claude Sonnet (Anthropic) to answer questions about it.
 
+## Deployment
+
+For production deployment to AWS Lambda, see **[DEPLOYMENT.md](DEPLOYMENT.md)** which contains:
+- Complete AWS Lambda deployment guide (Option 1: Direct Lambda)
+- Migration from in-memory storage to Supabase for chat contexts
+- API Gateway configuration with CORS setup
+- AWS Secrets Manager integration for secure credential storage
+- Chrome extension configuration for production API endpoints
+- Cost estimates, troubleshooting guide, and monitoring setup
+
 ## Architecture
 
 ### Two-Component System

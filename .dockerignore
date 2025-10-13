@@ -1,0 +1,24 @@
+# Don't copy these to Docker image
+.env
+.git
+.gitignore
+*.md
+*.sql
+lambda-deployment/
+lambda-layer.zip
+lambda-function.zip
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+.pytest_cache/
+.coverage
+htmlcov/
+dist/
+build/
+*.egg-info/
+chrome-extension/
+.vscode/
+.DS_Store

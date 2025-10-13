@@ -68,10 +68,12 @@ interface ExtractionResponse {
 }
 
 // Constants
+const API_BASE_URL = 'https://9tzh9wd092.execute-api.us-east-1.amazonaws.com';
 const ALLOWED_URLS = [
   'https://bhulekh.ori.nic.in/SRoRFront_Uni.aspx',
   'https://bhulekh.ori.nic.in/CRoRFront_Uni.aspx'
 ] as const;
+const TESTER_ID_STORAGE_KEY = 'bhulekha_tester_id';
 
 const ACTION_BUTTONS: ActionButton[] = [
   { id: 'summarize', label: 'Summarize', icon: '📝', query: 'Please provide a concise summary of this page' },
@@ -82,6 +84,7 @@ const ACTION_BUTTONS: ActionButton[] = [
 // State
 let pageContent: PageContent | null = null;
 let currentTab: chrome.tabs.Tab | null = null;
+let testerId: string | null = null;
 
 // DOM Elements
 const readContentBtn = document.getElementById('readContentBtn') as HTMLButtonElement;
@@ -89,6 +92,33 @@ const extractDetailsBtn = document.getElementById('extractDetailsBtn') as HTMLBu
 const sendButton = document.getElementById('sendButton') as HTMLButtonElement;
 const queryInput = document.getElementById('queryInput') as HTMLTextAreaElement;
 const chatMessages = document.getElementById('chatMessages') as HTMLDivElement;
+
+// Tester ID Storage Functions
+async function getTesterId(): Promise<string | null> {
+  return new Promise((resolve) => {
+    chrome.storage.sync.get([TESTER_ID_STORAGE_KEY], (result) => {
+      resolve(result[TESTER_ID_STORAGE_KEY] || null);
+    });
+  });
+}
+
+async function setTesterId(id: string): Promise<void> {
+  return new Promise((resolve) => {
+    chrome.storage.sync.set({ [TESTER_ID_STORAGE_KEY]: id }, () => {
+      testerId = id;
+      resolve();
+    });
+  });
+}
+
+async function clearTesterId(): Promise<void> {
+  return new Promise((resolve) => {
+    chrome.storage.sync.remove([TESTER_ID_STORAGE_KEY], () => {
+      testerId = null;
+      resolve();
+    });
+  });
+}
 
 // Helper Functions
 function isUrlAllowed(url: string): boolean {
@@ -256,10 +286,11 @@ function displayActionButtons(): void {
 
           const currentPageContent = results[0].result as PageContent;
 
-          const response = await fetch('http://localhost:8000/summarize', {
+          const response = await fetch(`${API_BASE_URL}/summarize`, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
+              'X-Tester-ID': testerId || 'anonymous',
             },
             body: JSON.stringify({
               url: currentTab.url,
@@ -282,10 +313,11 @@ function displayActionButtons(): void {
           }
         } else {
           // Use /chat endpoint for other action buttons
-          const response = await fetch('http://localhost:8000/chat', {
+          const response = await fetch(`${API_BASE_URL}/chat`, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
+              'X-Tester-ID': testerId || 'anonymous',
             },
             body: JSON.stringify({
               query: action.query,
@@ -344,10 +376,11 @@ async function handleFeedbackClick(event: Event): Promise<void> {
     const allFeedbackButtons = document.querySelectorAll('.feedback-btn') as NodeListOf<HTMLButtonElement>;
     allFeedbackButtons.forEach(btn => btn.disabled = true);
 
-    const response = await fetch('http://localhost:8000/submit-feedback', {
+    const response = await fetch(`${API_BASE_URL}/submit-feedback`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
+        'X-Tester-ID': testerId || 'anonymous',
       },
       body: JSON.stringify({
         extraction_id: extractionId,
@@ -395,10 +428,11 @@ async function handleLoadContent(): Promise<void> {
     pageContent = results[0].result as PageContent;
 
     // Load content to backend for context
-    const loadResponse = await fetch('http://localhost:8000/load-content', {
+    const loadResponse = await fetch(`${API_BASE_URL}/load-content`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
+        'X-Tester-ID': testerId || 'anonymous',
       },
       body: JSON.stringify({
         url: currentTab.url,
@@ -414,10 +448,11 @@ async function handleLoadContent(): Promise<void> {
     // Get explanation from Claude
     addSystemMessage('🤖 Getting explanation from Claude...');
 
-    const explainResponse = await fetch('http://localhost:8000/explain', {
+    const explainResponse = await fetch(`${API_BASE_URL}/explain`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
+        'X-Tester-ID': testerId || 'anonymous',
       },
       body: JSON.stringify({
         url: currentTab.url,
@@ -467,10 +502,11 @@ async function handleExtractDetails(): Promise<void> {
 
     addSystemMessage('📊 Fetching extracted details from database...');
 
-    const response = await fetch('http://localhost:8000/get-extraction', {
+    const response = await fetch(`${API_BASE_URL}/get-extraction`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
+        'X-Tester-ID': testerId || 'anonymous',
       },
       body: JSON.stringify({
         url: currentTab.url,
@@ -513,10 +549,11 @@ async function sendMessage(): Promise<void> {
   sendButton.disabled = true;
 
   try {
-    const response = await fetch('http://localhost:8000/chat', {
+    const response = await fetch(`${API_BASE_URL}/chat`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
+        'X-Tester-ID': testerId || 'anonymous',
       },
       body: JSON.stringify({
         query: query,
@@ -541,11 +578,66 @@ async function sendMessage(): Promise<void> {
   }
 }
 
+// Tester Setup Functions
+async function initializeTesterSetup(): Promise<void> {
+  const modal = document.getElementById('testerSetupModal') as HTMLDivElement;
+  const testerIdInput = document.getElementById('testerIdInput') as HTMLInputElement;
+  const saveTesterIdBtn = document.getElementById('saveTesterIdBtn') as HTMLButtonElement;
+
+  // Check if tester ID exists
+  const existingTesterId = await getTesterId();
+
+  if (existingTesterId) {
+    // Tester ID already exists, hide modal and load it
+    testerId = existingTesterId;
+    modal.style.display = 'none';
+    console.log(`Tester ID loaded: ${testerId}`);
+  } else {
+    // Show modal for first-time setup
+    modal.style.display = 'flex';
+  }
+
+  // Handle save button click
+  saveTesterIdBtn.addEventListener('click', async function () {
+    const newTesterId = testerIdInput.value.trim();
+
+    if (!newTesterId) {
+      alert('Please enter a tester ID');
+      return;
+    }
+
+    // Validate tester ID (alphanumeric, underscores, hyphens only)
+    if (!/^[a-zA-Z0-9_-]+$/.test(newTesterId)) {
+      alert('Tester ID can only contain letters, numbers, underscores, and hyphens');
+      return;
+    }
+
+    // Save tester ID
+    await setTesterId(newTesterId);
+
+    // Hide modal
+    modal.style.display = 'none';
+
+    addSystemMessage(`✅ Welcome, ${newTesterId}! Your ID has been saved.`);
+  });
+
+  // Handle Enter key in input
+  testerIdInput.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      saveTesterIdBtn.click();
+    }
+  });
+}
+
 // Initialize
-document.addEventListener('DOMContentLoaded', function () {
+document.addEventListener('DOMContentLoaded', async function () {
   // Initial state
   queryInput.disabled = true;
   sendButton.disabled = true;
+
+  // Initialize tester setup (check if ID exists, show modal if needed)
+  await initializeTesterSetup();
 
   // Check permissions
   checkUrlPermission();

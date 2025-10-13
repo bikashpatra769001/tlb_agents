@@ -5,11 +5,13 @@
   "description": "Reads content from Bhulekh website and provides chat interface",
   "permissions": [
     "activeTab",
-    "scripting"
+    "scripting",
+    "storage"
   ],
   "host_permissions": [
     "https://bhulekh.ori.nic.in/*",
-    "http://localhost:8000/*"
+    "http://localhost:8000/*",
+    "https://9tzh9wd092.execute-api.us-east-1.amazonaws.com/*"
   ],
   "action": {
     "default_popup": "popup.html",

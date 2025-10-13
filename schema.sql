@@ -32,6 +32,40 @@ DROP FUNCTION IF EXISTS update_updated_at_column() CASCADE;
 DROP TABLE IF EXISTS prompt_optimizations CASCADE;
 DROP TABLE IF EXISTS khatiyan_extractions CASCADE;
 DROP TABLE IF EXISTS khatiyan_records CASCADE;
+DROP TABLE IF EXISTS page_contexts CASCADE;
+
+-- ============================================================================
+-- Table: page_contexts
+-- ============================================================================
+-- Stores chat session contexts for Lambda deployment
+-- Replaces in-memory storage to support stateless Lambda containers
+
+CREATE TABLE page_contexts (
+  id BIGSERIAL PRIMARY KEY,
+
+  -- Page identification
+  url TEXT NOT NULL UNIQUE,
+  title TEXT NOT NULL,
+
+  -- Content storage
+  text_content TEXT NOT NULL,
+  html_content TEXT,
+
+  -- Metadata
+  word_count INTEGER,
+  char_count INTEGER,
+
+  -- Timestamps
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  last_accessed TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Index for fast URL lookups
+CREATE INDEX idx_page_contexts_url ON page_contexts(url);
+
+-- Index for cleanup queries (old contexts)
+CREATE INDEX idx_page_contexts_created_at ON page_contexts(created_at);
+CREATE INDEX idx_page_contexts_last_accessed ON page_contexts(last_accessed);
 
 -- ============================================================================
 -- Table: khatiyan_records
