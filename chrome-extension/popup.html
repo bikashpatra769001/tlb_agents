@@ -20,15 +20,19 @@
 
   <h3>Bhulekh Chat Assistant</h3>
 
-  <button id="readContentBtn">Help me understand</button>
-  <button id="extractDetailsBtn">Extract Details</button>
-
   <div id="chatContainer">
     <div id="chatMessages">
-      <div class="system-message">Welcome! This extension only works on the Bhulekh website. Load the page content first to get started.</div>
+      <div class="system-message">Welcome! This extension only works on the Bhulekh website.</div>
     </div>
   </div>
-  
+
+  <footer id="actionFooter">
+    <button id="extractDetailsBtn" class="action-button">📊 Show Details</button>
+    <button class="action-button" data-action="summarize">📝 Summarize</button>
+    <button class="action-button" data-action="apply_ec">📋 Apply EC</button>
+    <button class="action-button" data-action="apply_cc">📄 Apply CC</button>
+  </footer>
+
   <script src="dist/popup.js"></script>
 </body>
 </html>

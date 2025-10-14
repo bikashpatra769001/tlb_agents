@@ -87,7 +87,6 @@ let currentTab: chrome.tabs.Tab | null = null;
 let testerId: string | null = null;
 
 // DOM Elements
-const readContentBtn = document.getElementById('readContentBtn') as HTMLButtonElement;
 const extractDetailsBtn = document.getElementById('extractDetailsBtn') as HTMLButtonElement;
 const chatMessages = document.getElementById('chatMessages') as HTMLDivElement;
 
@@ -132,11 +131,10 @@ async function checkUrlPermission(): Promise<boolean> {
       addSystemMessage('❌ This extension only works on the Bhulekh website.');
       addSystemMessage('Please navigate to one of these URLs:');
       ALLOWED_URLS.forEach(url => addSystemMessage(`• ${url}`));
-      readContentBtn.disabled = true;
       return false;
     }
 
-    addSystemMessage('✅ Bhulekh website detected. You can load page content.');
+    addSystemMessage('✅ Bhulekh website detected. Loading page content...');
     return true;
   } catch (error) {
     addSystemMessage('❌ Error checking page permissions.');
@@ -251,98 +249,90 @@ function displayExtractionData(data: ExtractionData, extractionId: number): void
   scrollToBottom();
 }
 
-function displayActionButtons(): void {
-  const buttonsContainer = document.createElement('div');
-  buttonsContainer.className = 'action-buttons-container';
+async function handleActionButtonClick(actionId: string): Promise<void> {
+  const action = ACTION_BUTTONS.find(a => a.id === actionId);
+  if (!action) return;
 
-  ACTION_BUTTONS.forEach(action => {
-    const button = document.createElement('button');
-    button.className = 'action-button';
-    button.dataset.actionId = action.id;
-    button.innerHTML = `${action.icon} ${action.label}`;
+  if (!pageContent) {
+    addSystemMessage('❌ Page content is still loading. Please wait a moment.');
+    return;
+  }
 
-    button.addEventListener('click', async function () {
-      const allActionButtons = buttonsContainer.querySelectorAll('.action-button') as NodeListOf<HTMLButtonElement>;
-      allActionButtons.forEach(btn => btn.disabled = true);
+  if (!currentTab?.url || !currentTab?.title) {
+    addSystemMessage('❌ No active tab found.');
+    return;
+  }
 
-      addUserMessage(`${action.icon} ${action.label}`);
+  const allActionButtons = document.querySelectorAll('.action-button') as NodeListOf<HTMLButtonElement>;
+  allActionButtons.forEach(btn => btn.disabled = true);
 
-      try {
-        if (!currentTab?.url || !currentTab?.title) {
-          throw new Error('No active tab found');
-        }
+  addUserMessage(`${action.icon} ${action.label}`);
 
-        // Use /summarize endpoint for summarize button, /chat for others
-        if (action.id === 'summarize') {
-          // Read current page content for summarization
-          const results = await chrome.scripting.executeScript({
-            target: { tabId: currentTab.id! },
-            func: getPageContent
-          });
+  try {
+    // Use /summarize endpoint for summarize button, /chat for others
+    if (action.id === 'summarize') {
+      // Read current page content for summarization
+      const results = await chrome.scripting.executeScript({
+        target: { tabId: currentTab.id! },
+        func: getPageContent
+      });
 
-          const currentPageContent = results[0].result as PageContent;
+      const currentPageContent = results[0].result as PageContent;
 
-          const response = await fetch(`${API_BASE_URL}/summarize`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'X-Tester-ID': testerId || 'anonymous',
-            },
-            body: JSON.stringify({
-              url: currentTab.url,
-              title: currentTab.title,
-              content: currentPageContent
-            } as LoadContentRequest)
-          });
+      const response = await fetch(`${API_BASE_URL}/summarize`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Tester-ID': testerId || 'anonymous',
+        },
+        body: JSON.stringify({
+          url: currentTab.url,
+          title: currentTab.title,
+          content: currentPageContent
+        } as LoadContentRequest)
+      });
 
-          if (response.ok) {
-            const result = await response.json();
+      if (response.ok) {
+        const result = await response.json();
 
-            // Display HTML summary
-            const summaryContainer = document.createElement('div');
-            summaryContainer.className = 'message bot-message html-summary';
-            summaryContainer.innerHTML = result.html_summary;
-            chatMessages.appendChild(summaryContainer);
-            scrollToBottom();
-          } else {
-            throw new Error(`HTTP ${response.status}`);
-          }
-        } else {
-          // Use /chat endpoint for other action buttons
-          const response = await fetch(`${API_BASE_URL}/chat`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'X-Tester-ID': testerId || 'anonymous',
-            },
-            body: JSON.stringify({
-              query: action.query,
-              url: currentTab.url,
-              title: currentTab.title
-            } as ChatRequest)
-          });
-
-          if (response.ok) {
-            const result: ChatResponse = await response.json();
-            addBotMessage(result.response);
-          } else {
-            throw new Error(`HTTP ${response.status}`);
-          }
-        }
-
-      } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-        addBotMessage(`Sorry, I encountered an error: ${errorMessage}`);
-      } finally {
-        allActionButtons.forEach(btn => btn.disabled = false);
+        // Display HTML summary
+        const summaryContainer = document.createElement('div');
+        summaryContainer.className = 'message bot-message html-summary';
+        summaryContainer.innerHTML = result.html_summary;
+        chatMessages.appendChild(summaryContainer);
+        scrollToBottom();
+      } else {
+        throw new Error(`HTTP ${response.status}`);
       }
-    });
+    } else {
+      // Use /chat endpoint for other action buttons
+      const response = await fetch(`${API_BASE_URL}/chat`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Tester-ID': testerId || 'anonymous',
+        },
+        body: JSON.stringify({
+          query: action.query,
+          url: currentTab.url,
+          title: currentTab.title
+        } as ChatRequest)
+      });
 
-    buttonsContainer.appendChild(button);
-  });
+      if (response.ok) {
+        const result: ChatResponse = await response.json();
+        addBotMessage(result.response);
+      } else {
+        throw new Error(`HTTP ${response.status}`);
+      }
+    }
 
-  chatMessages.appendChild(buttonsContainer);
-  scrollToBottom();
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    addBotMessage(`Sorry, I encountered an error: ${errorMessage}`);
+  } finally {
+    allActionButtons.forEach(btn => btn.disabled = false);
+  }
 }
 
 // Function to be injected into the page
@@ -413,7 +403,6 @@ async function handleLoadContent(): Promise<void> {
       return;
     }
 
-    readContentBtn.disabled = true;
     addSystemMessage('📖 Reading page content...');
 
     const results = await chrome.scripting.executeScript({
@@ -460,8 +449,7 @@ async function handleLoadContent(): Promise<void> {
     if (explainResponse.ok) {
       const result: ExplainResponse = await explainResponse.json();
       addBotMessage(result.explanation);
-      displayActionButtons();
-      addSystemMessage('✅ Use the action buttons to interact with the content!');
+      addSystemMessage('✅ Use the action buttons below to interact with the content!');
     } else {
       throw new Error(`Failed to get explanation: HTTP ${explainResponse.status}`);
     }
@@ -469,8 +457,6 @@ async function handleLoadContent(): Promise<void> {
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
     addSystemMessage(`❌ Error: ${errorMessage}`);
-  } finally {
-    readContentBtn.disabled = false;
   }
 }
 
@@ -512,7 +498,7 @@ async function handleExtractDetails(): Promise<void> {
       addSystemMessage('✅ Extraction data loaded successfully!');
       displayExtractionData(result.data, result.extraction_id);
     } else if (response.status === 404) {
-      addSystemMessage('❌ No extraction found for this page. Please click "Help me understand" first to extract data.');
+      addSystemMessage('❌ No extraction found for this page. Data extraction happens automatically when the page loads.');
     } else if (response.status === 503) {
       addSystemMessage('❌ Database not available. Please configure Supabase connection.');
     } else {
@@ -585,10 +571,23 @@ document.addEventListener('DOMContentLoaded', async function () {
   // Initialize tester setup (check if ID exists, show modal if needed)
   await initializeTesterSetup();
 
-  // Check permissions
-  checkUrlPermission();
+  // Check permissions and auto-load content
+  const isValidUrl = await checkUrlPermission();
+  if (isValidUrl) {
+    await handleLoadContent();
+  }
 
-  // Event listeners
-  readContentBtn.addEventListener('click', handleLoadContent);
+  // Event listeners for main buttons
   extractDetailsBtn.addEventListener('click', handleExtractDetails);
+
+  // Event listeners for footer action buttons
+  const actionButtons = document.querySelectorAll('.action-button') as NodeListOf<HTMLButtonElement>;
+  actionButtons.forEach(button => {
+    button.addEventListener('click', function() {
+      const actionId = this.dataset.action;
+      if (actionId) {
+        handleActionButtonClick(actionId);
+      }
+    });
+  });
 });
