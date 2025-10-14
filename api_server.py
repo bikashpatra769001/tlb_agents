@@ -106,30 +106,45 @@ except Exception as e:
 
 # ==================== Load RoR Summary Prompt ====================
 
-# Load RoR summary prompt using prompt service (with API + fallback)
+# Lazy load RoR summary prompt on first use (to avoid event loop issues in Lambda)
+# Note: Deferred loading prevents asyncio.run() at module level which interferes with Mangum
 ROR_SUMMARY_PROMPT = None
-try:
-    if prompt_service:
-        ror_prompt_id = int(os.getenv("ROR_SUMMARY_PROMPT_ID", "2"))
+ROR_SUMMARY_PROMPT_LOADED = False  # Track if we attempted to load
 
-        # Use asyncio to fetch prompt during startup
-        async def fetch_prompt():
-            return await prompt_service.get_prompt(
+async def load_ror_prompt_if_needed():
+    """Lazy load RoR prompt on first use (within async context)
+
+    This avoids using asyncio.run() at module level which creates and closes an event loop,
+    interfering with Mangum's event loop management in Lambda.
+    """
+    global ROR_SUMMARY_PROMPT, ROR_SUMMARY_PROMPT_LOADED
+
+    if ROR_SUMMARY_PROMPT_LOADED:
+        return  # Already loaded or attempted
+
+    try:
+        if prompt_service:
+            ror_prompt_id = int(os.getenv("ROR_SUMMARY_PROMPT_ID", "2"))
+            ROR_SUMMARY_PROMPT = await prompt_service.get_prompt(
                 prompt_id=ror_prompt_id,
                 fallback_filename="ror_summary.txt"
             )
-
-        ROR_SUMMARY_PROMPT = asyncio.run(fetch_prompt())
-    else:
-        # Direct fallback if prompt service initialization failed
-        prompt_path = os.path.join(os.path.dirname(__file__), "prompts", "ror_summary.txt")
-        with open(prompt_path, 'r', encoding='utf-8') as f:
-            ROR_SUMMARY_PROMPT = f.read().strip()
-        print("✅ Loaded RoR summary prompt from local file (prompt service unavailable)")
-
-except Exception as e:
-    print(f"⚠️  Could not load RoR summary prompt: {e}")
-    ROR_SUMMARY_PROMPT = "You are a land document expert. Analyze the RoR document and provide a detailed summary."
+            # Update DSPy signature with fetched prompt
+            SummarizeRoR.__doc__ = ROR_SUMMARY_PROMPT
+            print(f"✅ Loaded RoR prompt dynamically (id={ror_prompt_id})")
+        else:
+            # Fallback to local file
+            prompt_path = os.path.join(os.path.dirname(__file__), "prompts", "ror_summary.txt")
+            with open(prompt_path, 'r', encoding='utf-8') as f:
+                ROR_SUMMARY_PROMPT = f.read().strip()
+            SummarizeRoR.__doc__ = ROR_SUMMARY_PROMPT
+            print("✅ Loaded RoR prompt from local file")
+    except Exception as e:
+        print(f"⚠️ Could not load RoR prompt: {e}")
+        ROR_SUMMARY_PROMPT = "You are a land document expert. Analyze the RoR document and provide a detailed summary."
+        SummarizeRoR.__doc__ = ROR_SUMMARY_PROMPT
+    finally:
+        ROR_SUMMARY_PROMPT_LOADED = True
 
 # ==================== DSPy Signatures ====================
 
@@ -204,9 +219,8 @@ class SummarizeRoR(dspy.Signature):
              "HTML should be well-formatted with proper spacing, bolding, and highlighting of important information."
     )
 
-# Set the loaded RoR prompt as the signature's docstring
-if ROR_SUMMARY_PROMPT:
-    SummarizeRoR.__doc__ = ROR_SUMMARY_PROMPT
+# Note: RoR prompt docstring is now set dynamically in load_ror_prompt_if_needed()
+# when the /summarize endpoint is first called
 
 # ==================== Agent Classes ====================
 
@@ -1004,6 +1018,9 @@ async def summarize_page(webpage: WebpageContent, request: Request):
     import time
 
     try:
+        # Lazy load prompt on first use (avoids event loop issues in Lambda)
+        await load_ror_prompt_if_needed()
+
         tester_id = get_tester_id(request)
         print(f"📝 [Tester: {tester_id}] /summarize for {webpage.url}")
         # Validate URL - only allow Bhulekh website
