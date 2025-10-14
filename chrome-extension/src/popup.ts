@@ -89,8 +89,6 @@ let testerId: string | null = null;
 // DOM Elements
 const readContentBtn = document.getElementById('readContentBtn') as HTMLButtonElement;
 const extractDetailsBtn = document.getElementById('extractDetailsBtn') as HTMLButtonElement;
-const sendButton = document.getElementById('sendButton') as HTMLButtonElement;
-const queryInput = document.getElementById('queryInput') as HTMLTextAreaElement;
 const chatMessages = document.getElementById('chatMessages') as HTMLDivElement;
 
 // Tester ID Storage Functions
@@ -135,8 +133,6 @@ async function checkUrlPermission(): Promise<boolean> {
       addSystemMessage('Please navigate to one of these URLs:');
       ALLOWED_URLS.forEach(url => addSystemMessage(`• ${url}`));
       readContentBtn.disabled = true;
-      queryInput.disabled = true;
-      sendButton.disabled = true;
       return false;
     }
 
@@ -465,11 +461,7 @@ async function handleLoadContent(): Promise<void> {
       const result: ExplainResponse = await explainResponse.json();
       addBotMessage(result.explanation);
       displayActionButtons();
-      addSystemMessage('✅ You can now ask follow-up questions!');
-
-      queryInput.disabled = false;
-      sendButton.disabled = false;
-      queryInput.focus();
+      addSystemMessage('✅ Use the action buttons to interact with the content!');
     } else {
       throw new Error(`Failed to get explanation: HTTP ${explainResponse.status}`);
     }
@@ -535,48 +527,6 @@ async function handleExtractDetails(): Promise<void> {
   }
 }
 
-async function sendMessage(): Promise<void> {
-  const query = queryInput.value.trim();
-  if (!query || !pageContent) return;
-
-  if (!currentTab?.url || !isUrlAllowed(currentTab.url)) {
-    addBotMessage('❌ This extension only works on the Bhulekh website.');
-    return;
-  }
-
-  addUserMessage(query);
-  queryInput.value = '';
-  sendButton.disabled = true;
-
-  try {
-    const response = await fetch(`${API_BASE_URL}/chat`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Tester-ID': testerId || 'anonymous',
-      },
-      body: JSON.stringify({
-        query: query,
-        url: currentTab.url,
-        title: currentTab.title
-      } as ChatRequest)
-    });
-
-    if (response.ok) {
-      const result: ChatResponse = await response.json();
-      addBotMessage(result.response);
-    } else {
-      throw new Error(`HTTP ${response.status}`);
-    }
-
-  } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-    addBotMessage(`Sorry, I encountered an error: ${errorMessage}`);
-  } finally {
-    sendButton.disabled = false;
-    queryInput.focus();
-  }
-}
 
 // Tester Setup Functions
 async function initializeTesterSetup(): Promise<void> {
@@ -632,10 +582,6 @@ async function initializeTesterSetup(): Promise<void> {
 
 // Initialize
 document.addEventListener('DOMContentLoaded', async function () {
-  // Initial state
-  queryInput.disabled = true;
-  sendButton.disabled = true;
-
   // Initialize tester setup (check if ID exists, show modal if needed)
   await initializeTesterSetup();
 
@@ -645,12 +591,4 @@ document.addEventListener('DOMContentLoaded', async function () {
   // Event listeners
   readContentBtn.addEventListener('click', handleLoadContent);
   extractDetailsBtn.addEventListener('click', handleExtractDetails);
-  sendButton.addEventListener('click', sendMessage);
-
-  queryInput.addEventListener('keydown', function (e) {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      sendMessage();
-    }
-  });
 });
