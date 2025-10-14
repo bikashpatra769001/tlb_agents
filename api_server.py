@@ -6,6 +6,10 @@ import os
 from anthropic import Anthropic
 from typing import Optional
 from dotenv import load_dotenv
+
+# Set DSPy cache directory BEFORE importing dspy (Lambda requires /tmp)
+os.environ.setdefault('DSPY_CACHEDIR', '/tmp/.dspy_cache')
+
 import dspy
 from supabase import create_client, Client
 import asyncio
@@ -20,23 +24,24 @@ app = FastAPI(title="Webpage Content Chat API")
 ENVIRONMENT = os.getenv("ENVIRONMENT", "development")
 CHROME_EXTENSION_ID = os.getenv("CHROME_EXTENSION_ID", "")
 
+# Note: API Gateway doesn't support chrome-extension:// origins, so we always use wildcard
+# This means we must set allow_credentials=False (CORS spec requirement)
+allowed_origins = ["*"]
+allow_credentials = False
+
 if ENVIRONMENT == "production" and CHROME_EXTENSION_ID:
-    # Support multiple extension IDs (comma-separated) for beta testing
     extension_ids = [id.strip() for id in CHROME_EXTENSION_ID.split(",") if id.strip()]
-    allowed_origins = [f"chrome-extension://{ext_id}" for ext_id in extension_ids]
-    print(f"🔒 Production mode - CORS restricted to {len(extension_ids)} extension(s):")
-    for origin in allowed_origins:
-        print(f"   - {origin}")
+    print(f"🔒 Production mode - CORS allows all origins (API Gateway limitation)")
+    print(f"   Security: URL validation restricts to Bhulekha sites only")
+    print(f"   Extension IDs tracked: {', '.join(extension_ids)}")
 else:
-    # Allow all for development
-    allowed_origins = ["*"]
     print("⚠️  Development mode - CORS allows all origins")
 
 # Enable CORS for Chrome extension
 app.add_middleware(
     CORSMiddleware,
     allow_origins=allowed_origins,
-    allow_credentials=True,
+    allow_credentials=allow_credentials,
     allow_methods=["*"],
     allow_headers=["*"],
 )

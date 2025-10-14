@@ -6,6 +6,9 @@ FROM public.ecr.aws/lambda/python:3.12
 # Set working directory
 WORKDIR ${LAMBDA_TASK_ROOT}
 
+# Set DSPy cache directory to /tmp (Lambda writable directory)
+ENV DSPY_CACHEDIR=/tmp/.dspy_cache
+
 # Copy requirements file
 COPY requirements.txt .
 
@@ -15,6 +18,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application code
 COPY api_server.py .
+COPY prompt_service.py .
 COPY prompts/ ./prompts/
 
 # Set the Lambda handler
