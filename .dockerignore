@@ -1,12 +1,29 @@
 # Don't copy these to Docker image
+
+# Environment & Config
 .env
+.env.local
 .git
 .gitignore
+
+# Documentation
 *.md
 *.sql
+
+# Lambda deployment artifacts
 lambda-deployment/
 lambda-layer.zip
 lambda-function.zip
+bhulekha-extension-v1.0.zip
+.lambda-bucket-name
+api-gateway-info.txt
+
+# Deployment scripts
+*.sh
+deploy-container.sh
+deploy.sh
+
+# Python cache & artifacts
 __pycache__/
 *.pyc
 *.pyo
@@ -19,6 +36,16 @@ htmlcov/
 dist/
 build/
 *.egg-info/
+
+# Chrome extension (not needed in Lambda)
 chrome-extension/
+
+# IDEs & OS
 .vscode/
+.idea/
 .DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/

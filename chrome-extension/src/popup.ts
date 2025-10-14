@@ -68,7 +68,7 @@ interface ExtractionResponse {
 }
 
 // Constants
-const API_BASE_URL = 'https://9tzh9wd092.execute-api.us-east-1.amazonaws.com';
+const API_BASE_URL = 'https://ktmvpqc0o6.execute-api.us-east-1.amazonaws.com';
 const ALLOWED_URLS = [
   'https://bhulekh.ori.nic.in/SRoRFront_Uni.aspx',
   'https://bhulekh.ori.nic.in/CRoRFront_Uni.aspx'

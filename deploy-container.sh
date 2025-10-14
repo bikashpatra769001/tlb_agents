@@ -18,9 +18,10 @@ set -e  # Exit on error
 # Configuration
 AWS_ACCOUNT_ID="292814267481"
 AWS_REGION="us-east-1"
-FUNCTION_NAME="bhulekha-extension-api"
+FUNCTION_NAME="bhulekha-extension"
 ECR_REPO_NAME="bhulekha-extension-api"
 IMAGE_TAG="latest"
+CHROME_EXTENSION_ID="hknfgjmgpcdehabepbgifofnglkiihgb"
 
 # Load environment variables from .env if it exists
 if [ -f .env ]; then
@@ -205,10 +206,9 @@ echo
 echo "Step 8: Setting up API Gateway..."
 
 # Check if API already exists by function name
-API_ID=$(aws apigatewayv2 get-apis --region $AWS_REGION | \
-    grep -o "\"ApiId\":\"[^\"]*\".*\"Name\":\"$FUNCTION_NAME-api\"" | \
-    grep -o "\"ApiId\":\"[^\"]*\"" | \
-    cut -d'"' -f4 | head -1)
+API_ID=$(aws apigatewayv2 get-apis --region $AWS_REGION \
+    --query "Items[?Name=='$FUNCTION_NAME-api'].ApiId | [0]" \
+    --output text)
 
 if [ -z "$API_ID" ]; then
     echo "   Creating new API Gateway..."
@@ -254,11 +254,27 @@ EOF
     echo "   API details saved to: api-gateway-info.txt"
 else
     echo "⚠️  API Gateway already exists (ID: $API_ID)"
-    API_ENDPOINT=$(aws apigatewayv2 get-api --api-id $API_ID --region $AWS_REGION | \
-        grep -o '"ApiEndpoint":"[^"]*' | cut -d'"' -f4)
+    API_ENDPOINT=$(aws apigatewayv2 get-api --api-id $API_ID --region $AWS_REGION \
+        --query "ApiEndpoint" \
+        --output text)
     echo "   Endpoint: $API_ENDPOINT"
 fi
 
+echo
+
+# ============================================================================
+# STEP 9: Configure CORS on API Gateway
+# ============================================================================
+echo "Step 9: Configuring CORS on API Gateway..."
+
+# Note: API Gateway doesn't support chrome-extension:// origins, so we use wildcard (*)
+# Security is still enforced by FastAPI in Lambda based on CHROME_EXTENSION_ID
+aws apigatewayv2 update-api \
+    --api-id $API_ID \
+    --region $AWS_REGION \
+    --cors-configuration "AllowOrigins=*,AllowMethods=GET,POST,OPTIONS,AllowHeaders=Content-Type,X-Tester-ID,AllowCredentials=false,MaxAge=3600"
+
+echo "✅ CORS configured (API Gateway allows all origins, FastAPI restricts to extension ID)"
 echo
 
 # ============================================================================
@@ -278,6 +294,7 @@ echo
 echo "API Gateway:"
 echo "  API ID: $API_ID"
 echo "  Endpoint: $API_ENDPOINT"
+echo "  CORS: Enabled (wildcard at API Gateway, restricted by Lambda)"
 echo
 echo "Next Steps:"
 echo "  1. Test the API:"
