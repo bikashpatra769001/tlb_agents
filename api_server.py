@@ -8,6 +8,8 @@ from typing import Optional
 from dotenv import load_dotenv
 import dspy
 from supabase import create_client, Client
+import asyncio
+from prompt_service import PromptService
 
 # Load environment variables from .env file
 load_dotenv()
@@ -80,15 +82,46 @@ try:
 except Exception as e:
     print(f"❌ Error initializing Supabase: {e}")
 
+# ==================== Initialize Prompt Service ====================
+
+# Initialize PromptService for dynamic prompt fetching
+prompt_service = None
+try:
+    prompt_service_url = os.getenv("PROMPT_SERVICE_URL", "https://5rp9zvhds7.ap-south-1.awsapprunner.com")
+    cache_ttl = int(os.getenv("PROMPT_CACHE_TTL_SECONDS", "3600"))
+
+    prompt_service = PromptService(
+        api_base_url=prompt_service_url,
+        cache_ttl_seconds=cache_ttl,
+        fallback_dir="prompts"
+    )
+    print(f"✅ Prompt service initialized (url={prompt_service_url}, cache_ttl={cache_ttl}s)")
+except Exception as e:
+    print(f"⚠️  Could not initialize prompt service: {e}")
+
 # ==================== Load RoR Summary Prompt ====================
 
-# Load RoR summary prompt from file
+# Load RoR summary prompt using prompt service (with API + fallback)
 ROR_SUMMARY_PROMPT = None
 try:
-    prompt_path = os.path.join(os.path.dirname(__file__), "prompts", "ror_summary.txt")
-    with open(prompt_path, 'r', encoding='utf-8') as f:
-        ROR_SUMMARY_PROMPT = f.read().strip()
-    print("✅ Loaded RoR summary prompt from prompts/ror_summary.txt")
+    if prompt_service:
+        ror_prompt_id = int(os.getenv("ROR_SUMMARY_PROMPT_ID", "2"))
+
+        # Use asyncio to fetch prompt during startup
+        async def fetch_prompt():
+            return await prompt_service.get_prompt(
+                prompt_id=ror_prompt_id,
+                fallback_filename="ror_summary.txt"
+            )
+
+        ROR_SUMMARY_PROMPT = asyncio.run(fetch_prompt())
+    else:
+        # Direct fallback if prompt service initialization failed
+        prompt_path = os.path.join(os.path.dirname(__file__), "prompts", "ror_summary.txt")
+        with open(prompt_path, 'r', encoding='utf-8') as f:
+            ROR_SUMMARY_PROMPT = f.read().strip()
+        print("✅ Loaded RoR summary prompt from local file (prompt service unavailable)")
+
 except Exception as e:
     print(f"⚠️  Could not load RoR summary prompt: {e}")
     ROR_SUMMARY_PROMPT = "You are a land document expert. Analyze the RoR document and provide a detailed summary."
