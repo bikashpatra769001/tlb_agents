@@ -8,31 +8,45 @@ This is a Chrome extension with a FastAPI backend that enables chat-based intera
 
 ## Deployment
 
-For production deployment to AWS Lambda, see **[DEPLOYMENT.md](DEPLOYMENT.md)** which contains:
-- Complete AWS Lambda deployment guide (Option 1: Direct Lambda)
-- Migration from in-memory storage to Supabase for chat contexts
-- API Gateway configuration with CORS setup
-- AWS Secrets Manager integration for secure credential storage
-- Chrome extension configuration for production API endpoints
-- Cost estimates, troubleshooting guide, and monitoring setup
+**Current Status: ✅ Deployed to AWS Lambda (Production)**
+
+The application is deployed as a serverless Lambda function using Docker containers:
+- **Lambda Function**: `bhulekha-extension-api` (us-east-1)
+- **API Endpoint**: `https://9tzh9wd092.execute-api.us-east-1.amazonaws.com`
+- **Container**: 2048MB memory, 300s timeout, stored in Amazon ECR
+- **Extension ID**: `hknfgjmgpcdehabepbgifofnglkiihgb` (production package)
+
+See **[DEPLOYMENT.md](DEPLOYMENT.md)** for complete deployment guide including:
+- Lambda Container Image deployment (Option 2 - currently in use)
+- Docker containerization with automated deployment scripts
+- API Gateway HTTP API configuration
+- Environment variable management (DSPY_CACHEDIR, CORS, etc.)
+- Cost estimates (~$3.71/month base, ~$18/month with beta testing)
+
+For beta testing setup, see **[BETA_TESTING_GUIDE.md](BETA_TESTING_GUIDE.md)** and **[DISTRIBUTION_README.md](DISTRIBUTION_README.md)**
 
 ## Architecture
 
 ### Two-Component System
 
 1. **FastAPI Backend** (`api_server.py`)
-   - Hosts chat API endpoints on `localhost:8000`
+   - **Local Dev**: Runs on `localhost:8000` with uvicorn
+   - **Production**: Deployed as AWS Lambda function via Mangum adapter
    - Uses Anthropic Claude Sonnet 3.5 (`claude-3-5-sonnet-20241022`) for content analysis
-   - Stores page contexts in-memory (not persistent)
+   - Stores page contexts in **Supabase** (persistent, Lambda-compatible)
    - URL-restricted to only allow Bhulekh websites for security
+   - Environment-aware CORS (development: all origins, production: specific extension ID)
    - Contains `SummarizationAgent` class with fallback responses when API key is unavailable
 
 2. **Chrome Extension** (`chrome-extension/`)
    - Manifest V3 Chrome extension written in TypeScript
    - Chat interface in popup window (`popup.html`, compiled from `src/popup.ts`)
    - Content script (compiled from `src/content.ts`) for Bhulekh page extraction
+   - **Tester Identification**: Chrome Storage API for persistent tester IDs with first-time modal setup
+   - **Beta Testing Ready**: All API requests include `X-Tester-ID` header for tracking
    - Restricted to `https://bhulekh.ori.nic.in/*` URLs
    - TypeScript source in `src/`, compiled JavaScript in `dist/`
+   - Production package: `bhulekha-extension-v1.0.zip` (Extension ID: `hknfgjmgpcdehabepbgifofnglkiihgb`)
 
 ### Key Components
 
@@ -45,8 +59,11 @@ For production deployment to AWS Lambda, see **[DEPLOYMENT.md](DEPLOYMENT.md)** 
 - **Supabase Storage Functions**:
   - `get_or_create_khatiyan_record()`: Creates/retrieves page record
   - `store_khatiyan_extraction()`: Stores model extraction with metadata
-- **URL Whitelist** (api_server.py:300-307): Security restriction to Bhulekh URLs only
-- **In-memory Storage** (api_server.py:27): `page_contexts` dict - for chat context only
+  - `store_page_context()`: Stores page content for Lambda persistence
+  - `get_page_context()`: Retrieves stored page content for chat context
+- **Tester Tracking**: `get_tester_id(request)` extracts `X-Tester-ID` header and logs all requests
+- **Lambda Handler**: Mangum adapter for AWS Lambda compatibility (api_server.py:~940)
+- **URL Whitelist**: Security restriction to Bhulekh URLs only
 
 ### Database Schema
 
