@@ -1,3 +1,8 @@
+/* ==================== Global Styles ==================== */
+html {
+  overflow: hidden;
+}
+
 /* ==================== CSS Variables ==================== */
 :root {
   /* Colors */
@@ -31,10 +36,10 @@
   --radius-xl: 20px;
 
   /* Dimensions */
-  --popup-width: 400px;
-  --popup-height: 500px;
-  --chat-min-height: 200px;
-  --chat-max-height: 300px;
+  --popup-width: 480px;
+  --popup-height: 600px;
+  --chat-min-height: 250px;
+  --chat-max-height: 400px;
 
   /* Typography */
   --font-family: Arial, sans-serif;
@@ -45,6 +50,7 @@
 
 /* ==================== Base Styles ==================== */
 body {
+  box-sizing: border-box;
   width: var(--popup-width);
   height: var(--popup-height);
   padding: var(--spacing-xl);
@@ -52,6 +58,7 @@ body {
   margin: 0;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
 }
 
 h3 {
@@ -71,12 +78,10 @@ h3 {
 }
 
 #chatMessages {
-  flex: 1;
+  height: 100%;
   padding: var(--spacing-md);
   overflow-y: auto;
   background-color: var(--color-gray-100);
-  min-height: var(--chat-min-height);
-  max-height: var(--chat-max-height);
 }
 
 /* ==================== Message Styles ==================== */
@@ -484,7 +489,7 @@ h3 {
   background-color: var(--color-gray-200);
   border-top: 1px solid var(--color-gray-400);
   border-radius: 0 0 var(--radius-md) var(--radius-md);
-  margin-top: var(--spacing-md);
+  margin-top: 0;
   justify-content: space-around;
 }
 
@@ -492,4 +497,8 @@ h3 {
   flex: 1;
   min-width: 0;
   padding: var(--spacing-md) var(--spacing-sm);
+  font-size: var(--font-size-xs);
+  white-space: normal;
+  text-align: center;
+  line-height: 1.3;
 }
