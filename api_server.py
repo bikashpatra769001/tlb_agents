@@ -6,6 +6,7 @@ import os
 from anthropic import Anthropic
 from typing import Optional
 from dotenv import load_dotenv
+from datetime import datetime, timedelta, timezone
 
 # Set DSPy cache directory BEFORE importing dspy (Lambda requires /tmp)
 os.environ.setdefault('DSPY_CACHEDIR', '/tmp/.dspy_cache')
@@ -578,13 +579,16 @@ async def get_cached_summary(
         return None
 
     try:
+        # Calculate 24 hours ago timestamp
+        twenty_four_hours_ago = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+
         result = supabase_client.table("khatiyan_extractions")\
             .select("id, summary_html, summary_generation_time_ms, created_at")\
             .eq("khatiyan_record_id", khatiyan_record_id)\
             .eq("model_name", model_name)\
             .eq("prompt_version", prompt_version)\
             .not_.is_("summary_html", "null")\
-            .gte("created_at", "now() - interval '24 hours'")\
+            .gte("created_at", twenty_four_hours_ago)\
             .order("created_at", desc=True)\
             .limit(1)\
             .execute()
@@ -616,7 +620,7 @@ async def store_page_context(url: str, title: str, text: str, html: str = None) 
             "html_content": html,
             "word_count": len(text.split()),
             "char_count": len(text),
-            "last_accessed": "NOW()"
+            "last_accessed": datetime.now(timezone.utc).isoformat()
         }
 
         # Upsert: update if exists (based on unique url constraint), insert if new
@@ -647,7 +651,7 @@ async def get_page_context(url: str) -> Optional[dict]:
         if result.data and len(result.data) > 0:
             # Update last_accessed timestamp
             supabase_client.table("page_contexts")\
-                .update({"last_accessed": "NOW()"})\
+                .update({"last_accessed": datetime.now(timezone.utc).isoformat()})\
                 .eq("url", url)\
                 .execute()
 
@@ -851,12 +855,14 @@ async def explain_content(webpage: WebpageContent, request: Request):
                         print(f"📌 Found existing record {record_id} for {district}/{tehsil}/{village}/{khatiyan_number}")
 
                         # Check for recent extraction (within 24 hours) to avoid re-extraction
+                        twenty_four_hours_ago = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+
                         extraction_result = supabase_client.table("khatiyan_extractions")\
                             .select("extraction_data, created_at")\
                             .eq("khatiyan_record_id", record_id)\
                             .eq("model_name", "claude-3-5-sonnet-20241022")\
                             .eq("prompt_version", "v1")\
-                            .gte("created_at", "now() - interval '24 hours'")\
+                            .gte("created_at", twenty_four_hours_ago)\
                             .order("created_at", desc=True)\
                             .limit(1)\
                             .execute()
@@ -1073,7 +1079,7 @@ async def submit_feedback(feedback: FeedbackRequest, request: Request):
         # Update the extraction record - store feedback status in extraction_status
         update_data = {
             "extraction_status": feedback.feedback,  # 'correct' or 'wrong'
-            "feedback_timestamp": "NOW()"
+            "feedback_timestamp": datetime.now(timezone.utc).isoformat()
         }
 
         # Store optional user comment in extraction_user_feedback column
@@ -1128,7 +1134,7 @@ async def submit_summary_feedback(feedback: FeedbackRequest, request: Request):
         # Update the extraction record - store feedback status in summarization_status
         update_data = {
             "summarization_status": feedback.feedback,  # 'correct' or 'wrong'
-            "summary_feedback_timestamp": "NOW()"
+            "summary_feedback_timestamp": datetime.now(timezone.utc).isoformat()
         }
 
         # Store optional user comment in summarization_user_feedback column
