@@ -264,3 +264,10 @@ tmp/
 # Cache directories
 .cache/
 cache/
+
+# AWS Lambda deployment artifacts
+.lambda-bucket-name
+lambda-function.zip
+lambda-layer.zip
+lambda-deployment/
+bhulekha-extension-v*.zip
