@@ -137,7 +137,7 @@ CREATE TABLE khatiyan_extractions (
   tokens_used INTEGER,           -- API tokens consumed (for cost tracking)
 
   -- User feedback
-  user_feedback TEXT,            -- Optional text feedback from users
+  extraction_user_feedback TEXT, -- Optional free-form feedback/comments from users (especially when marking as 'wrong')
   feedback_timestamp TIMESTAMP WITH TIME ZONE,
 
   -- Metadata

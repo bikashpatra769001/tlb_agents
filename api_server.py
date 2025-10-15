@@ -18,11 +18,15 @@ from prompt_service import PromptService
 # Load environment variables from .env file
 load_dotenv()
 
+# Load secrets from AWS Parameter Store (with .env fallback for local dev)
+from aws_secrets import get_secrets
+secrets = get_secrets()
+
 app = FastAPI(title="Webpage Content Chat API")
 
 # Determine environment and configure CORS
 ENVIRONMENT = os.getenv("ENVIRONMENT", "development")
-CHROME_EXTENSION_ID = os.getenv("CHROME_EXTENSION_ID", "")
+CHROME_EXTENSION_ID = secrets.get("chrome_extension_id", "")
 
 # Note: API Gateway doesn't support chrome-extension:// origins, so we always use wildcard
 # This means we must set allow_credentials=False (CORS spec requirement)
@@ -53,7 +57,7 @@ app.add_middleware(
 # Initialize Anthropic client
 anthropic_client = None
 try:
-    api_key = os.getenv("ANTHROPIC_API_KEY")
+    api_key = secrets.get("anthropic_api_key")
     if api_key:
         anthropic_client = Anthropic(api_key=api_key)
         print("✅ Anthropic Claude initialized successfully")
@@ -77,8 +81,8 @@ except Exception as e:
 # Initialize Supabase client
 supabase_client: Optional[Client] = None
 try:
-    supabase_url = os.getenv("SUPABASE_URL")
-    supabase_key = os.getenv("SUPABASE_KEY")
+    supabase_url = secrets.get("supabase_url")
+    supabase_key = secrets.get("supabase_key")
     if supabase_url and supabase_key:
         supabase_client = create_client(supabase_url, supabase_key)
         print("✅ Supabase client initialized successfully")
@@ -92,7 +96,7 @@ except Exception as e:
 # Initialize PromptService for dynamic prompt fetching
 prompt_service = None
 try:
-    prompt_service_url = os.getenv("PROMPT_SERVICE_URL", "https://5rp9zvhds7.ap-south-1.awsapprunner.com")
+    prompt_service_url = secrets.get("prompt_service_url", "https://5rp9zvhds7.ap-south-1.awsapprunner.com")
     cache_ttl = int(os.getenv("PROMPT_CACHE_TTL_SECONDS", "3600"))
 
     prompt_service = PromptService(
@@ -954,7 +958,7 @@ async def get_extraction(webpage: WebpageContent, request: Request):
 async def submit_feedback(feedback: FeedbackRequest, request: Request):
     """
     Submit user feedback on extraction quality (thumbs up/down)
-    Stores feedback in user_feedback column with timestamp
+    Stores feedback status in extraction_status column, optional comments in extraction_user_feedback
     """
     try:
         tester_id = get_tester_id(request)
@@ -972,15 +976,15 @@ async def submit_feedback(feedback: FeedbackRequest, request: Request):
                 detail="Feedback must be 'correct' or 'wrong'"
             )
 
-        # Update the extraction record - store in user_feedback, not extraction_status
+        # Update the extraction record - store feedback status in extraction_status
         update_data = {
-            "user_feedback": feedback.feedback,
+            "extraction_status": feedback.feedback,  # 'correct' or 'wrong'
             "feedback_timestamp": "NOW()"
         }
 
-        # Add optional user comment if provided
+        # Store optional user comment in extraction_user_feedback column
         if feedback.user_comment:
-            update_data["user_feedback"] = f"{feedback.feedback}: {feedback.user_comment}"
+            update_data["extraction_user_feedback"] = feedback.user_comment
 
         result = supabase_client.table("khatiyan_extractions")\
             .update(update_data)\

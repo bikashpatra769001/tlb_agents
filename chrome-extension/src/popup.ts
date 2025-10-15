@@ -68,7 +68,7 @@ interface ExtractionResponse {
 }
 
 // Constants
-const API_BASE_URL = 'https://ktmvpqc0o6.execute-api.us-east-1.amazonaws.com';
+const API_BASE_URL = 'https://wyt8w11xp0.execute-api.ap-south-1.amazonaws.com';
 const ALLOWED_URLS = [
   'https://bhulekh.ori.nic.in/SRoRFront_Uni.aspx',
   'https://bhulekh.ori.nic.in/CRoRFront_Uni.aspx'
@@ -89,6 +89,8 @@ let testerId: string | null = null;
 // DOM Elements
 const extractDetailsBtn = document.getElementById('extractDetailsBtn') as HTMLButtonElement;
 const chatMessages = document.getElementById('chatMessages') as HTMLDivElement;
+const loadingOverlay = document.getElementById('loadingOverlay') as HTMLDivElement;
+const loadingText = document.querySelector('.loading-text') as HTMLDivElement;
 
 // Tester ID Storage Functions
 async function getTesterId(): Promise<string | null> {
@@ -115,6 +117,22 @@ async function clearTesterId(): Promise<void> {
       resolve();
     });
   });
+}
+
+// Loading Spinner Functions
+function showLoading(message: string = 'Loading...'): void {
+  if (loadingText) {
+    loadingText.textContent = message;
+  }
+  if (loadingOverlay) {
+    loadingOverlay.style.display = 'flex';
+  }
+}
+
+function hideLoading(): void {
+  if (loadingOverlay) {
+    loadingOverlay.style.display = 'none';
+  }
 }
 
 // Helper Functions
@@ -268,6 +286,9 @@ async function handleActionButtonClick(actionId: string): Promise<void> {
 
   addUserMessage(`${action.icon} ${action.label}`);
 
+  // Show loading spinner with custom message
+  showLoading(actionId === 'summarize' ? 'Generating summary...' : 'Processing request...');
+
   try {
     // Use /summarize endpoint for summarize button, /chat for others
     if (action.id === 'summarize') {
@@ -331,6 +352,7 @@ async function handleActionButtonClick(actionId: string): Promise<void> {
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
     addBotMessage(`Sorry, I encountered an error: ${errorMessage}`);
   } finally {
+    hideLoading();
     allActionButtons.forEach(btn => btn.disabled = false);
   }
 }
@@ -362,6 +384,9 @@ async function handleFeedbackClick(event: Event): Promise<void> {
     const allFeedbackButtons = document.querySelectorAll('.feedback-btn') as NodeListOf<HTMLButtonElement>;
     allFeedbackButtons.forEach(btn => btn.disabled = true);
 
+    // Show loading spinner
+    showLoading('Submitting feedback...');
+
     const response = await fetch(`${API_BASE_URL}/submit-feedback`, {
       method: 'POST',
       headers: {
@@ -392,6 +417,8 @@ async function handleFeedbackClick(event: Event): Promise<void> {
     // Re-enable buttons on error
     const allFeedbackButtons = document.querySelectorAll('.feedback-btn') as NodeListOf<HTMLButtonElement>;
     allFeedbackButtons.forEach(btn => btn.disabled = false);
+  } finally {
+    hideLoading();
   }
 }
 
@@ -403,6 +430,7 @@ async function handleLoadContent(): Promise<void> {
       return;
     }
 
+    showLoading('Reading page content...');
     addSystemMessage('📖 Reading page content...');
 
     const results = await chrome.scripting.executeScript({
@@ -430,8 +458,8 @@ async function handleLoadContent(): Promise<void> {
       throw new Error(`Failed to load content: HTTP ${loadResponse.status}`);
     }
 
-    // Get explanation from Claude
-    addSystemMessage('🤖 Getting explanation from Claude...');
+    showLoading('Curating explaination from our Land experts...');
+    addSystemMessage('🤖 Curating explanation from our Land experts...');
 
     const explainResponse = await fetch(`${API_BASE_URL}/explain`, {
       method: 'POST',
@@ -457,6 +485,8 @@ async function handleLoadContent(): Promise<void> {
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
     addSystemMessage(`❌ Error: ${errorMessage}`);
+  } finally {
+    hideLoading();
   }
 }
 
@@ -468,6 +498,7 @@ async function handleExtractDetails(): Promise<void> {
     }
 
     extractDetailsBtn.disabled = true;
+    showLoading('Reading page content...');
     addSystemMessage('📊 Reading current page content...');
 
     // Read current page content to match exact page state
@@ -478,6 +509,7 @@ async function handleExtractDetails(): Promise<void> {
 
     const currentPageContent = results[0].result as PageContent;
 
+    showLoading('Fetching extracted details...');
     addSystemMessage('📊 Fetching extracted details from database...');
 
     const response = await fetch(`${API_BASE_URL}/get-extraction`, {
@@ -509,6 +541,7 @@ async function handleExtractDetails(): Promise<void> {
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
     addSystemMessage(`❌ Error: ${errorMessage}`);
   } finally {
+    hideLoading();
     extractDetailsBtn.disabled = false;
   }
 }
