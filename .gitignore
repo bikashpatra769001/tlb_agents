@@ -121,6 +121,11 @@ celerybeat.pid
 
 # Environments
 .env
+.env.*
+.env.local
+.env.dev
+.env.prod
+.env.staging
 .venv
 env/
 venv/
@@ -271,3 +276,4 @@ lambda-function.zip
 lambda-layer.zip
 lambda-deployment/
 bhulekha-extension-v*.zip
+api-gateway-info.txt

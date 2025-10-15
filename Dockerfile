@@ -19,6 +19,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application code
 COPY api_server.py .
 COPY prompt_service.py .
+COPY aws_secrets.py .
 COPY prompts/ ./prompts/
 
 # Set the Lambda handler
