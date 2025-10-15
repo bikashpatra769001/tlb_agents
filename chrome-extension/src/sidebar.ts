@@ -835,15 +835,6 @@ document.addEventListener('DOMContentLoaded', async function () {
       );
     });
   }
-
-  // Event listener for close sidebar button
-  const closeSidebarBtn = document.getElementById('closeSidebarBtn') as HTMLButtonElement;
-  if (closeSidebarBtn) {
-    closeSidebarBtn.addEventListener('click', function() {
-      // Send message to content script to hide sidebar
-      window.postMessage({ type: 'BHULEKHA_CLOSE_SIDEBAR' }, '*');
-    });
-  }
 });
 
 })(); // End IIFE

@@ -39,24 +39,6 @@ body {
   color: white;
 }
 
-.close-sidebar-btn {
-  background: rgba(255, 255, 255, 0.2);
-  border: none;
-  color: white;
-  font-size: 24px;
-  line-height: 1;
-  cursor: pointer;
-  padding: var(--spacing-sm) var(--spacing-md);
-  border-radius: var(--radius-sm);
-  transition: all 0.2s ease;
-  font-weight: 300;
-}
-
-.close-sidebar-btn:hover {
-  background: rgba(255, 255, 255, 0.3);
-  transform: rotate(90deg);
-}
-
 /* Chat Container - fills remaining space */
 #chatContainer {
   flex: 1;
