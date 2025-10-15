@@ -1,4 +1,4 @@
-// Wrap in IIFE to avoid global scope conflicts with sidebar.ts
+// Wrap in IIFE to avoid global scope conflicts with popup.ts
 (function() {
 
 // Types
@@ -833,6 +833,15 @@ document.addEventListener('DOMContentLoaded', async function () {
         isSummary,
         button
       );
+    });
+  }
+
+  // Event listener for close sidebar button
+  const closeSidebarBtn = document.getElementById('closeSidebarBtn') as HTMLButtonElement;
+  if (closeSidebarBtn) {
+    closeSidebarBtn.addEventListener('click', function() {
+      // Send message to content script to hide sidebar
+      window.postMessage({ type: 'BHULEKHA_CLOSE_SIDEBAR' }, '*');
     });
   }
 });

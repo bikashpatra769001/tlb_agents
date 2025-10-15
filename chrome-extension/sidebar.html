@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Bhulekha Chat Assistant</title>
-  <link rel="stylesheet" href="popup.css">
+  <title>Bhulekha Chat Assistant - Sidebar</title>
+  <link rel="stylesheet" href="sidebar.css">
 </head>
 <body>
   <!-- Tester Setup Modal -->
@@ -31,7 +31,10 @@
     </div>
   </div>
 
-  <h3>Bhulekha Chat Assistant</h3>
+  <div class="sidebar-header">
+    <h3>🌾 Bhulekha Assistant</h3>
+    <button id="closeSidebarBtn" class="close-sidebar-btn" title="Close sidebar (Ctrl+Shift+B)">✕</button>
+  </div>
 
   <!-- Loading Spinner Overlay -->
   <div id="loadingOverlay" class="loading-overlay" style="display: none;">
@@ -41,7 +44,7 @@
 
   <div id="chatContainer">
     <div id="chatMessages">
-      <div class="system-message">Welcome! This extension only works on the Bhulekh website.</div>
+      <div class="system-message">Welcome! Sidebar mode is active.</div>
     </div>
   </div>
 
@@ -52,6 +55,6 @@
     <button class="action-button" data-action="apply_cc">📄 Apply CC</button>
   </footer>
 
-  <script src="dist/popup.js"></script>
+  <script src="dist/sidebar.js"></script>
 </body>
 </html>

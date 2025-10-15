@@ -1,0 +1,143 @@
+/* ==================== Sidebar Specific Styles ==================== */
+/* Import base styles from popup.css */
+@import url('popup.css');
+
+/* Override dimensions for sidebar */
+:root {
+  --sidebar-width: 550px;
+  --sidebar-header-height: 60px;
+}
+
+/* Sidebar container - takes full height */
+body {
+  width: var(--sidebar-width);
+  height: 100vh;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  background-color: white;
+  box-shadow: -4px 0 12px rgba(0, 0, 0, 0.15);
+}
+
+/* Sidebar Header */
+.sidebar-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: var(--spacing-lg) var(--spacing-xl);
+  background: linear-gradient(135deg, var(--color-primary), var(--color-primary-hover));
+  color: white;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  min-height: var(--sidebar-header-height);
+}
+
+.sidebar-header h3 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  color: white;
+}
+
+.close-sidebar-btn {
+  background: rgba(255, 255, 255, 0.2);
+  border: none;
+  color: white;
+  font-size: 24px;
+  line-height: 1;
+  cursor: pointer;
+  padding: var(--spacing-sm) var(--spacing-md);
+  border-radius: var(--radius-sm);
+  transition: all 0.2s ease;
+  font-weight: 300;
+}
+
+.close-sidebar-btn:hover {
+  background: rgba(255, 255, 255, 0.3);
+  transform: rotate(90deg);
+}
+
+/* Chat Container - fills remaining space */
+#chatContainer {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  margin: var(--spacing-md);
+  border: 1px solid var(--color-gray-400);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  min-height: 0;
+}
+
+#chatMessages {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--spacing-md);
+  background-color: var(--color-gray-100);
+}
+
+/* Footer - at bottom */
+#actionFooter {
+  margin: 0 var(--spacing-md) var(--spacing-md) var(--spacing-md);
+  padding: var(--spacing-md);
+  background-color: var(--color-gray-200);
+  border-top: 1px solid var(--color-gray-400);
+  border-radius: var(--radius-md);
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-sm);
+  justify-content: space-around;
+}
+
+#actionFooter .action-button {
+  flex: 1;
+  min-width: 0;
+  padding: var(--spacing-sm);
+  font-size: var(--font-size-xs);
+  white-space: nowrap;
+  text-align: center;
+}
+
+/* Messages - slightly smaller in sidebar */
+.message {
+  font-size: var(--font-size-sm);
+  line-height: 1.5;
+}
+
+/* Extraction display adjustments */
+.extraction-display {
+  font-size: var(--font-size-sm);
+}
+
+.extraction-table td {
+  padding: var(--spacing-xs) var(--spacing-sm);
+  font-size: var(--font-size-xs);
+}
+
+/* Modal positioning for sidebar */
+.modal {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+}
+
+/* Scrollbar styling for sidebar */
+#chatMessages::-webkit-scrollbar {
+  width: 8px;
+}
+
+#chatMessages::-webkit-scrollbar-track {
+  background: var(--color-gray-200);
+  border-radius: var(--radius-sm);
+}
+
+#chatMessages::-webkit-scrollbar-thumb {
+  background: var(--color-gray-400);
+  border-radius: var(--radius-sm);
+}
+
+#chatMessages::-webkit-scrollbar-thumb:hover {
+  background: var(--color-gray-500);
+}

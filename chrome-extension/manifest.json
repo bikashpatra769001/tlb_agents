@@ -24,8 +24,26 @@
   },
   "content_scripts": [
     {
-      "matches": ["https://bhulekh.ori.nic.in/SRoRFront_Uni.aspx*"],
+      "matches": ["https://bhulekh.ori.nic.in/SRoRFront_Uni.aspx*", "https://bhulekh.ori.nic.in/CRoRFront_Uni.aspx*"],
       "js": ["dist/content.js"]
     }
-  ]
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["sidebar.html", "sidebar.css", "dist/sidebar.js"],
+      "matches": ["https://bhulekh.ori.nic.in/*"]
+    }
+  ],
+  "commands": {
+    "toggle-sidebar": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+B",
+        "mac": "Command+Shift+B"
+      },
+      "description": "Toggle sidebar"
+    }
+  },
+  "background": {
+    "service_worker": "dist/background.js"
+  }
 }

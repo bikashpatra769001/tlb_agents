@@ -36,10 +36,10 @@ html {
   --radius-xl: 20px;
 
   /* Dimensions */
-  --popup-width: 480px;
-  --popup-height: 600px;
-  --chat-min-height: 250px;
-  --chat-max-height: 400px;
+  --popup-width: 600px;
+  --popup-height: 700px;
+  --chat-min-height: 300px;
+  --chat-max-height: 500px;
 
   /* Typography */
   --font-family: Arial, sans-serif;
@@ -477,6 +477,84 @@ h3 {
 
   &:disabled {
     background-color: var(--color-gray-500);
+    cursor: not-allowed;
+  }
+}
+
+/* ==================== Feedback Modal ==================== */
+#feedbackCommentInput {
+  width: 100%;
+  padding: var(--spacing-md);
+  border: 2px solid var(--color-gray-400);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-sm);
+  font-family: var(--font-family);
+  box-sizing: border-box;
+  margin-bottom: var(--spacing-md);
+  outline: none;
+  resize: vertical;
+  min-height: 80px;
+  line-height: 1.4;
+
+  &:focus {
+    border-color: var(--color-primary);
+  }
+
+  &::placeholder {
+    color: var(--color-gray-500);
+    font-style: italic;
+  }
+}
+
+.modal-buttons {
+  display: flex;
+  gap: var(--spacing-md);
+  justify-content: center;
+  margin-top: var(--spacing-md);
+}
+
+.primary-button {
+  padding: var(--spacing-md) 20px;
+  background-color: var(--color-primary);
+  color: white;
+  border: none;
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-base);
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color 0.2s ease;
+  flex: 1;
+
+  &:hover {
+    background-color: var(--color-primary-hover);
+  }
+
+  &:disabled {
+    background-color: var(--color-gray-500);
+    cursor: not-allowed;
+  }
+}
+
+.secondary-button {
+  padding: var(--spacing-md) 20px;
+  background-color: white;
+  color: var(--color-gray-900);
+  border: 2px solid var(--color-gray-400);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-base);
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  flex: 1;
+
+  &:hover {
+    background-color: var(--color-gray-200);
+    border-color: var(--color-gray-500);
+  }
+
+  &:disabled {
+    background-color: var(--color-gray-300);
+    color: var(--color-gray-500);
     cursor: not-allowed;
   }
 }
