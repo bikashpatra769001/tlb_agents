@@ -506,6 +506,100 @@ async def store_khatiyan_extraction(
         print(f"❌ Error storing extraction: {e}")
         return False
 
+async def store_or_update_summary(
+    khatiyan_record_id: int,
+    html_summary: str,
+    model_provider: str,
+    model_name: str,
+    prompt_version: str = "v1",
+    generation_time_ms: int = None
+) -> Optional[int]:
+    """Update existing extraction row with summary data, or create if doesn't exist"""
+    if not supabase_client:
+        print("⚠️  Supabase client not available - skipping summary storage")
+        return None
+
+    try:
+        # Try to find existing extraction row
+        result = supabase_client.table("khatiyan_extractions")\
+            .select("id")\
+            .eq("khatiyan_record_id", khatiyan_record_id)\
+            .eq("model_provider", model_provider)\
+            .eq("model_name", model_name)\
+            .eq("prompt_version", prompt_version)\
+            .limit(1)\
+            .execute()
+
+        update_data = {
+            "summary_html": html_summary,
+            "summary_generation_time_ms": generation_time_ms,
+            "summarization_status": "pending"
+        }
+
+        if result.data and len(result.data) > 0:
+            # Update existing row
+            extraction_id = result.data[0]["id"]
+            supabase_client.table("khatiyan_extractions")\
+                .update(update_data)\
+                .eq("id", extraction_id)\
+                .execute()
+            print(f"✅ Updated summary for extraction {extraction_id}")
+            return extraction_id
+        else:
+            # Create new row (extraction data may not exist yet)
+            # This handles case where user clicks "Summarize" before "Show Details"
+            insert_data = {
+                "khatiyan_record_id": khatiyan_record_id,
+                "model_provider": model_provider,
+                "model_name": model_name,
+                "prompt_version": prompt_version,
+                "extraction_data": {},  # Empty JSONB for now
+                **update_data
+            }
+            result = supabase_client.table("khatiyan_extractions")\
+                .insert(insert_data)\
+                .execute()
+            extraction_id = result.data[0]["id"]
+            print(f"✅ Created new extraction row {extraction_id} with summary")
+            return extraction_id
+
+    except Exception as e:
+        print(f"❌ Error storing summary: {e}")
+        return None
+
+async def get_cached_summary(
+    khatiyan_record_id: int,
+    model_name: str,
+    prompt_version: str = "v1"
+) -> Optional[dict]:
+    """Get cached summary from extraction row if exists and recent (<24h)"""
+    if not supabase_client:
+        print("⚠️  Supabase client not available - cannot retrieve cached summary")
+        return None
+
+    try:
+        result = supabase_client.table("khatiyan_extractions")\
+            .select("id, summary_html, summary_generation_time_ms, created_at")\
+            .eq("khatiyan_record_id", khatiyan_record_id)\
+            .eq("model_name", model_name)\
+            .eq("prompt_version", prompt_version)\
+            .not_.is_("summary_html", "null")\
+            .gte("created_at", "now() - interval '24 hours'")\
+            .order("created_at", desc=True)\
+            .limit(1)\
+            .execute()
+
+        if result.data and len(result.data) > 0:
+            cached = result.data[0]
+            print(f"✅ Found cached summary (extraction_id: {cached['id']})")
+            return cached
+
+        return None
+
+    except Exception as e:
+        print(f"❌ Error retrieving cached summary: {e}")
+        return None
+
 # ==================== Page Context Storage Functions ====================
 
 async def store_page_context(url: str, title: str, text: str, html: str = None) -> bool:
@@ -1007,10 +1101,65 @@ async def submit_feedback(feedback: FeedbackRequest, request: Request):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error submitting feedback: {str(e)}")
 
+@app.post("/submit-summary-feedback")
+async def submit_summary_feedback(feedback: FeedbackRequest, request: Request):
+    """
+    Submit user feedback on summary quality (thumbs up/down)
+    Stores feedback status in summarization_status column, optional comments in summarization_user_feedback
+
+    Note: Reuses FeedbackRequest model and extraction_id field (same table, different columns)
+    """
+    try:
+        tester_id = get_tester_id(request)
+        print(f"👍👎 [Tester: {tester_id}] /submit-summary-feedback: {feedback.feedback} for extraction {feedback.extraction_id}")
+        if not supabase_client:
+            raise HTTPException(
+                status_code=503,
+                detail="Database not available. Please configure Supabase connection."
+            )
+
+        # Validate feedback value
+        if feedback.feedback not in ['correct', 'wrong']:
+            raise HTTPException(
+                status_code=400,
+                detail="Feedback must be 'correct' or 'wrong'"
+            )
+
+        # Update the extraction record - store feedback status in summarization_status
+        update_data = {
+            "summarization_status": feedback.feedback,  # 'correct' or 'wrong'
+            "summary_feedback_timestamp": "NOW()"
+        }
+
+        # Store optional user comment in summarization_user_feedback column
+        if feedback.user_comment:
+            update_data["summarization_user_feedback"] = feedback.user_comment
+
+        result = supabase_client.table("khatiyan_extractions")\
+            .update(update_data)\
+            .eq("id", feedback.extraction_id)\
+            .execute()
+
+        if not result.data:
+            raise HTTPException(
+                status_code=404,
+                detail="Summary not found"
+            )
+
+        return {
+            "status": "success",
+            "message": f"Summary feedback recorded as '{feedback.feedback}'"
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error submitting summary feedback: {str(e)}")
+
 @app.post("/summarize")
 async def summarize_page(webpage: WebpageContent, request: Request):
     """
-    Generate comprehensive RoR summary with risk assessment
+    Generate comprehensive RoR summary with risk assessment (with caching)
 
     Returns HTML-formatted summary with:
     - Safety score (1-10) with color-coded background
@@ -1018,6 +1167,8 @@ async def summarize_page(webpage: WebpageContent, request: Request):
     - Ownership analysis (govt/corporate/citizen classification)
     - Risk assessment with reasoning
     - Recommended next steps
+
+    Caching: Summaries are cached for 24 hours per unique khatiyan record
     """
     import time
 
@@ -1027,6 +1178,7 @@ async def summarize_page(webpage: WebpageContent, request: Request):
 
         tester_id = get_tester_id(request)
         print(f"📝 [Tester: {tester_id}] /summarize for {webpage.url}")
+
         # Validate URL - only allow Bhulekh website
         if not is_url_allowed(webpage.url):
             allowed_urls_str = ", ".join(ALLOWED_URLS)
@@ -1039,7 +1191,54 @@ async def summarize_page(webpage: WebpageContent, request: Request):
         text_content = webpage.content.get('text', '')
         html_content = webpage.content.get('html', '')
 
-        # Generate RoR summary using DSPy
+        # Extract khatiyan details to get identifiers for caching
+        extraction_start = time.time()
+        khatiyan_data = await summarization_agent.extract_khatiyan_details(
+            text_content, webpage.title
+        )
+
+        district = khatiyan_data.get("district", "")
+        tehsil = khatiyan_data.get("tehsil", "")
+        village = khatiyan_data.get("village", "")
+        khatiyan_number = khatiyan_data.get("khatiyan_number", "")
+
+        record_id = None
+        cached_summary = None
+
+        # Get or create khatiyan_record for caching
+        if district and tehsil and village and khatiyan_number:
+            record_id = await get_or_create_khatiyan_record(
+                district=district,
+                tehsil=tehsil,
+                village=village,
+                khatiyan_number=khatiyan_number,
+                title=webpage.title,
+                raw_content=text_content,
+                raw_html=html_content
+            )
+
+            # Check for cached summary
+            if record_id:
+                cached_summary = await get_cached_summary(
+                    khatiyan_record_id=record_id,
+                    model_name="claude-3-5-sonnet-20241022",
+                    prompt_version="v1"
+                )
+
+        # Return cached summary if available
+        if cached_summary:
+            print(f"📦 Returning cached summary (extraction_id: {cached_summary['id']})")
+            return {
+                "status": "success",
+                "url": webpage.url,
+                "title": webpage.title,
+                "html_summary": cached_summary["summary_html"],
+                "generation_time_ms": cached_summary.get("summary_generation_time_ms", 0),
+                "extraction_id": cached_summary["id"],
+                "cached": True
+            }
+
+        # Generate new summary using DSPy
         summary_start = time.time()
         html_summary = await summarization_agent.summarize_ror_document(
             text_content,
@@ -1047,17 +1246,28 @@ async def summarize_page(webpage: WebpageContent, request: Request):
         )
         summary_time_ms = int((time.time() - summary_start) * 1000)
 
-        print(f"📝 Generated RoR summary in {summary_time_ms}ms for: {webpage.url}")
+        # Store summary in database
+        extraction_id = None
+        if record_id:
+            extraction_id = await store_or_update_summary(
+                khatiyan_record_id=record_id,
+                html_summary=html_summary,
+                model_provider="anthropic",
+                model_name="claude-3-5-sonnet-20241022",
+                prompt_version="v1",
+                generation_time_ms=summary_time_ms
+            )
 
-        # Optional: Store summary in database for caching
-        # (Can implement later with a ror_summaries table)
+        print(f"📝 Generated new summary in {summary_time_ms}ms for: {webpage.url}")
 
         return {
             "status": "success",
             "url": webpage.url,
             "title": webpage.title,
             "html_summary": html_summary,
-            "generation_time_ms": summary_time_ms
+            "generation_time_ms": summary_time_ms,
+            "extraction_id": extraction_id,
+            "cached": False
         }
 
     except HTTPException:

@@ -140,6 +140,15 @@ CREATE TABLE khatiyan_extractions (
   extraction_user_feedback TEXT, -- Optional free-form feedback/comments from users (especially when marking as 'wrong')
   feedback_timestamp TIMESTAMP WITH TIME ZONE,
 
+  -- Summary storage (stored in same row as extraction)
+  summary_html TEXT,                        -- Generated RoR summary HTML
+  summary_generation_time_ms INTEGER,       -- Time to generate summary
+
+  -- Summary quality and validation
+  summarization_status TEXT CHECK (summarization_status IN ('pending', 'correct', 'wrong', 'needs_review')),
+  summarization_user_feedback TEXT,         -- Optional feedback comments for summaries
+  summary_feedback_timestamp TIMESTAMP WITH TIME ZONE,
+
   -- Metadata
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
@@ -157,6 +166,9 @@ CREATE INDEX idx_extractions_created ON khatiyan_extractions(created_at DESC);
 
 -- Composite index for model comparison queries
 CREATE INDEX idx_extractions_comparison ON khatiyan_extractions(khatiyan_record_id, model_name, extraction_status);
+
+-- Index for summary queries (partial index - only rows with summaries)
+CREATE INDEX idx_extractions_summary ON khatiyan_extractions(khatiyan_record_id, model_name) WHERE summary_html IS NOT NULL;
 
 -- JSONB indexes for querying extracted data fields
 -- GIN index for general JSONB queries

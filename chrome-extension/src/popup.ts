@@ -67,6 +67,16 @@ interface ExtractionResponse {
   extraction_id: number;
 }
 
+interface SummaryResponse {
+  status: string;
+  url: string;
+  title: string;
+  html_summary: string;
+  generation_time_ms: number;
+  extraction_id: number;  // For feedback submission
+  cached: boolean;        // Show cache indicator
+}
+
 // Constants
 const API_BASE_URL = 'https://wyt8w11xp0.execute-api.ap-south-1.amazonaws.com';
 const ALLOWED_URLS = [
@@ -267,6 +277,55 @@ function displayExtractionData(data: ExtractionData, extractionId: number): void
   scrollToBottom();
 }
 
+function displaySummaryWithFeedback(
+  htmlSummary: string,
+  extractionId: number,
+  cached: boolean
+): void {
+  const container = document.createElement('div');
+  container.className = 'message bot-message html-summary';
+
+  // Cache indicator
+  if (cached) {
+    const cacheTag = document.createElement('div');
+    cacheTag.className = 'cache-indicator';
+    cacheTag.style.cssText = 'background: #e3f2fd; padding: 5px 10px; border-radius: 3px; margin-bottom: 10px; font-size: 0.9em;';
+    cacheTag.innerHTML = '📦 <small>Cached summary (loaded from database)</small>';
+    container.appendChild(cacheTag);
+  }
+
+  // HTML summary content
+  const summaryDiv = document.createElement('div');
+  summaryDiv.innerHTML = htmlSummary;
+  container.appendChild(summaryDiv);
+
+  // Feedback buttons
+  const feedbackContainer = document.createElement('div');
+  feedbackContainer.className = 'feedback-container';
+  feedbackContainer.innerHTML = `
+    <div class="feedback-prompt">Is this summary helpful and accurate?</div>
+    <div class="feedback-buttons">
+      <button class="feedback-btn thumbs-up" data-extraction-id="${extractionId}" data-feedback="correct">
+        👍 Helpful
+      </button>
+      <button class="feedback-btn thumbs-down" data-extraction-id="${extractionId}" data-feedback="wrong">
+        👎 Not Helpful
+      </button>
+    </div>
+  `;
+
+  container.appendChild(feedbackContainer);
+  chatMessages.appendChild(container);
+
+  // Attach event listeners
+  const feedbackButtons = feedbackContainer.querySelectorAll('.feedback-btn') as NodeListOf<HTMLButtonElement>;
+  feedbackButtons.forEach(button => {
+    button.addEventListener('click', handleSummaryFeedbackClick);
+  });
+
+  scrollToBottom();
+}
+
 async function handleActionButtonClick(actionId: string): Promise<void> {
   const action = ACTION_BUTTONS.find(a => a.id === actionId);
   if (!action) return;
@@ -314,14 +373,14 @@ async function handleActionButtonClick(actionId: string): Promise<void> {
       });
 
       if (response.ok) {
-        const result = await response.json();
+        const result: SummaryResponse = await response.json();
 
-        // Display HTML summary
-        const summaryContainer = document.createElement('div');
-        summaryContainer.className = 'message bot-message html-summary';
-        summaryContainer.innerHTML = result.html_summary;
-        chatMessages.appendChild(summaryContainer);
-        scrollToBottom();
+        // Display HTML summary with feedback UI
+        displaySummaryWithFeedback(
+          result.html_summary,
+          result.extraction_id,
+          result.cached
+        );
       } else {
         throw new Error(`HTTP ${response.status}`);
       }
@@ -406,6 +465,59 @@ async function handleFeedbackClick(event: Event): Promise<void> {
       // Update button appearance to show which was clicked
       button.classList.add('selected');
       button.textContent = feedback === 'correct' ? '✓ Marked Correct' : '✗ Marked Wrong';
+    } else {
+      throw new Error(`HTTP ${response.status}`);
+    }
+
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    addSystemMessage(`❌ Error submitting feedback: ${errorMessage}`);
+
+    // Re-enable buttons on error
+    const allFeedbackButtons = document.querySelectorAll('.feedback-btn') as NodeListOf<HTMLButtonElement>;
+    allFeedbackButtons.forEach(btn => btn.disabled = false);
+  } finally {
+    hideLoading();
+  }
+}
+
+async function handleSummaryFeedbackClick(event: Event): Promise<void> {
+  const button = event.currentTarget as HTMLButtonElement;
+  const extractionId = parseInt(button.dataset.extractionId || '0');
+  const feedback = button.dataset.feedback as string;
+
+  if (!extractionId) {
+    addSystemMessage('❌ Error: Extraction ID not found');
+    return;
+  }
+
+  try {
+    // Disable all feedback buttons
+    const allFeedbackButtons = document.querySelectorAll('.feedback-btn') as NodeListOf<HTMLButtonElement>;
+    allFeedbackButtons.forEach(btn => btn.disabled = true);
+
+    // Show loading spinner
+    showLoading('Submitting feedback...');
+
+    const response = await fetch(`${API_BASE_URL}/submit-summary-feedback`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Tester-ID': testerId || 'anonymous',
+      },
+      body: JSON.stringify({
+        extraction_id: extractionId,
+        feedback: feedback
+      })
+    });
+
+    if (response.ok) {
+      const result = await response.json();
+      addSystemMessage(`✅ ${result.message}. Thank you for your feedback!`);
+
+      // Update button appearance to show which was clicked
+      button.classList.add('selected');
+      button.textContent = feedback === 'correct' ? '✓ Marked Helpful' : '✗ Marked Not Helpful';
     } else {
       throw new Error(`HTTP ${response.status}`);
     }
