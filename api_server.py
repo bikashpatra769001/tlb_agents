@@ -155,17 +155,33 @@ async def load_ror_prompt_if_needed():
 
 class ExtractKhatiyan(dspy.Signature):
     """Extract ALL structured Khatiyan land record details from Bhulekha webpage content.
-    Extract ALL information including district, tehsil, village, khatiyan number, owner details, plots, and any special comments.
-    IMPORTANT: Translate all Indic language text to English. All output fields must contain ONLY English text, not Odia or other Indic scripts."""
 
-    content: str = dspy.InputField(desc="The webpage text content")
+    CRITICAL EXTRACTION REQUIREMENTS:
+    1. For location names (district, tehsil, village): Extract BOTH formats when available:
+       - English transliteration (e.g., "Khordha", "Bhubaneswar", "Patia")
+       - Native Odia script (e.g., "ଖୋର୍ଦ୍ଧା", "ଭୁବନେଶ୍ୱର", "ପାଟିଆ")
+
+    2. Search the content carefully for text in Odia script (looks like: ଜିଲ୍ଲା, ତହସିଲ, ମୌଜା, etc.)
+
+    3. If native Odia text is present, extract it EXACTLY as shown. If not present, leave the native fields empty.
+
+    4. For other fields (owner names, etc.), translate Indic language text to English.
+
+    Extract ALL information including district, tehsil, village, khatiyan number, owner details, plots, and any special comments."""
+
+    content: str = dspy.InputField(desc="The webpage text content containing both Odia script and English text")
     title: str = dspy.InputField(desc="The webpage title")
 
-    # Location information (in English)
-    district: str = dspy.OutputField(desc="The district (ଜିଲ୍ଲା) name in ENGLISH only")
-    tehsil: str = dspy.OutputField(desc="The tehsil/block (ତହସିଲ) name in ENGLISH only")
-    village: str = dspy.OutputField(desc="The village (ମୌଜା) name in ENGLISH only")
-    khatiyan_number: str = dspy.OutputField(desc="The Khatiyan/Plot (ଖତିୟାନର କ୍ରମିକ ନମ୍ବର) number")
+    # Location information (English transliteration)
+    district: str = dspy.OutputField(desc="District name in ENGLISH (e.g., 'Khordha', 'Cuttack'). Look for ଜିଲ୍ଲା label.")
+    tehsil: str = dspy.OutputField(desc="Tehsil/Tahasil/Block name in ENGLISH (e.g., 'Bhubaneswar'). Look for ତହସିଲ label.")
+    village: str = dspy.OutputField(desc="Village/Mouza name in ENGLISH (e.g., 'Patia'). Look for ମୌଜା label.")
+    khatiyan_number: str = dspy.OutputField(desc="Khatiyan number (e.g., '1234'). Look for ଖତିୟାନର କ୍ରମିକ ନମ୍ବର label.")
+
+    # Location information (Native Odia script) - Extract EXACTLY as shown
+    native_district: str = dspy.OutputField(desc="District name in ODIA SCRIPT ONLY (e.g., 'ଖୋର୍ଦ୍ଧା'). Copy the Odia text that appears after ଜିଲ୍ଲା label. Leave empty if no Odia script found.")
+    native_tehsil: str = dspy.OutputField(desc="Tehsil name in ODIA SCRIPT ONLY (e.g., 'ଭୁବନେଶ୍ୱର'). Copy the Odia text that appears after ତହସିଲ label. Leave empty if no Odia script found.")
+    native_village: str = dspy.OutputField(desc="Village name in ODIA SCRIPT ONLY (e.g., 'ପାଟିଆ'). Copy the Odia text that appears after ମୌଜା label. Leave empty if no Odia script found.")
 
     # Owner information (in English)
     owner_name: str = dspy.OutputField(desc="The primary owner/tenant name (ରୟତ/ଭୂସ୍ୱାମୀ) in ENGLISH only, transliterated from Odia if needed")
@@ -247,12 +263,29 @@ class SummarizationAgent:
         """Extract Khatiyan details using DSPy"""
         try:
             result = self.extractor(content=content, title=title)
+
+            # Extract native language fields (may be None or empty)
+            native_district = getattr(result, 'native_district', None) or None
+            native_tehsil = getattr(result, 'native_tehsil', None) or None
+            native_village = getattr(result, 'native_village', None) or None
+
+            # Debug logging to see what Claude extracted
+            print(f"🔍 Extracted native fields:")
+            print(f"   native_district: {native_district}")
+            print(f"   native_tehsil: {native_tehsil}")
+            print(f"   native_village: {native_village}")
+
             return {
-                # Location information
+                # Location information (English)
                 "district": result.district or "Not found",
                 "tehsil": result.tehsil or "Not found",
                 "village": result.village or "Not found",
                 "khatiyan_number": result.khatiyan_number or "Not found",
+
+                # Location information (Native Odia script)
+                "native_district": native_district,
+                "native_tehsil": native_tehsil,
+                "native_village": native_village,
 
                 # Owner information
                 "owner_name": result.owner_name or "Not found",
@@ -276,6 +309,9 @@ class SummarizationAgent:
                 "tehsil": "Extraction failed",
                 "village": "Extraction failed",
                 "khatiyan_number": "Extraction failed",
+                "native_district": None,
+                "native_tehsil": None,
+                "native_village": None,
                 "owner_name": "Extraction failed",
                 "father_name": "Extraction failed",
                 "caste": "Extraction failed",
@@ -426,11 +462,15 @@ async def get_or_create_khatiyan_record(
     khatiyan_number: str,
     title: str,
     raw_content: str,
-    raw_html: str = None
+    raw_html: str = None,
+    native_district: str = None,
+    native_tehsil: str = None,
+    native_village: str = None
 ) -> Optional[int]:
     """Get existing or create new khatiyan_record and return its ID
 
     Deduplication is based on (district, tehsil, village, khatiyan_number) combination.
+    Native language names are stored but not used for deduplication.
     """
     if not supabase_client:
         print("⚠️  Supabase client not available - skipping data storage")
@@ -460,7 +500,10 @@ async def get_or_create_khatiyan_record(
             "khatiyan_number": khatiyan_number,
             "title": title,
             "raw_content": raw_content,
-            "raw_html": raw_html
+            "raw_html": raw_html,
+            "native_district": native_district,
+            "native_tehsil": native_tehsil,
+            "native_village": native_village
         }
 
         result = supabase_client.table("khatiyan_records").insert(data).execute()
@@ -890,7 +933,10 @@ async def explain_content(webpage: WebpageContent, request: Request):
                     khatiyan_number=khatiyan_number,
                     title=webpage.title,
                     raw_content=text_content,
-                    raw_html=html_content
+                    raw_html=html_content,
+                    native_district=khatiyan_data.get("native_district"),
+                    native_tehsil=khatiyan_data.get("native_tehsil"),
+                    native_village=khatiyan_data.get("native_village")
                 )
 
         # Store extraction to Supabase (if not cached and record exists)
@@ -1220,7 +1266,10 @@ async def summarize_page(webpage: WebpageContent, request: Request):
                 khatiyan_number=khatiyan_number,
                 title=webpage.title,
                 raw_content=text_content,
-                raw_html=html_content
+                raw_html=html_content,
+                native_district=khatiyan_data.get("native_district"),
+                native_tehsil=khatiyan_data.get("native_tehsil"),
+                native_village=khatiyan_data.get("native_village")
             )
 
             # Check for cached summary

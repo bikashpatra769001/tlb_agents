@@ -81,7 +81,8 @@ interface SummaryResponse {
 }
 
 // Constants
-const API_BASE_URL = 'https://wyt8w11xp0.execute-api.ap-south-1.amazonaws.com';
+// const API_BASE_URL = 'https://wyt8w11xp0.execute-api.ap-south-1.amazonaws.com';
+const API_BASE_URL = 'http://0.0.0.0:8000'
 const ALLOWED_URLS = [
   'https://bhulekh.ori.nic.in/SRoRFront_Uni.aspx',
   'https://bhulekh.ori.nic.in/CRoRFront_Uni.aspx'

@@ -17,18 +17,26 @@
 -- ============================================================================
 
 -- Drop views first (they depend on tables)
+DROP VIEW IF EXISTS common_matching_failures CASCADE;
+DROP VIEW IF EXISTS location_matching_stats CASCADE;
+DROP VIEW IF EXISTS unresolved_location_failures CASCADE;
 DROP VIEW IF EXISTS extraction_details CASCADE;
 DROP VIEW IF EXISTS model_accuracy CASCADE;
 DROP VIEW IF EXISTS latest_extractions CASCADE;
 
 -- Drop triggers
+DROP TRIGGER IF EXISTS trg_audit_location_matching ON khatiyan_records;
+DROP TRIGGER IF EXISTS trg_populate_khatiyan_location_ids ON khatiyan_records;
 DROP TRIGGER IF EXISTS update_khatiyan_extractions_updated_at ON khatiyan_extractions;
 DROP TRIGGER IF EXISTS update_khatiyan_records_updated_at ON khatiyan_records;
 
--- Drop function
+-- Drop functions
+DROP FUNCTION IF EXISTS audit_location_matching() CASCADE;
+DROP FUNCTION IF EXISTS populate_khatiyan_location_ids() CASCADE;
 DROP FUNCTION IF EXISTS update_updated_at_column() CASCADE;
 
 -- Drop tables (in reverse dependency order)
+DROP TABLE IF EXISTS location_matching_audit CASCADE;
 DROP TABLE IF EXISTS prompt_optimizations CASCADE;
 DROP TABLE IF EXISTS khatiyan_extractions CASCADE;
 DROP TABLE IF EXISTS khatiyan_records CASCADE;
@@ -82,6 +90,16 @@ CREATE TABLE khatiyan_records (
   village TEXT NOT NULL,
   khatiyan_number TEXT NOT NULL,
 
+  -- Native language names (e.g., Odia script)
+  native_district TEXT,
+  native_tehsil TEXT,
+  native_village TEXT,
+
+  -- Location IDs (auto-populated by trigger from master tables)
+  district_id BIGINT,  -- References districts table
+  tehsil_id BIGINT,    -- References tahasils table
+  village_id BIGINT,   -- References villages table
+
   -- Page metadata
   title TEXT,
 
@@ -98,9 +116,66 @@ CREATE TABLE khatiyan_records (
   CONSTRAINT unique_khatiyan UNIQUE(district, tehsil, village, khatiyan_number)
 );
 
--- Index for looking up existing records by location
+-- Index for looking up existing records by location (text-based)
 CREATE INDEX idx_khatiyan_records_location ON khatiyan_records(district, tehsil, village);
+CREATE INDEX idx_khatiyan_records_native_location ON khatiyan_records(native_district, native_tehsil, native_village);
 CREATE INDEX idx_khatiyan_records_created ON khatiyan_records(created_at DESC);
+
+-- Indexes for location IDs (for efficient lookups and joins)
+CREATE INDEX idx_khatiyan_records_district_id ON khatiyan_records(district_id);
+CREATE INDEX idx_khatiyan_records_tehsil_id ON khatiyan_records(tehsil_id);
+CREATE INDEX idx_khatiyan_records_village_id ON khatiyan_records(village_id);
+
+-- Composite index for location hierarchy lookups (district -> tehsil -> village)
+CREATE INDEX idx_khatiyan_records_location_ids ON khatiyan_records(district_id, tehsil_id, village_id);
+
+-- ============================================================================
+-- Table: location_matching_audit
+-- ============================================================================
+-- Audit log for tracking location name matching attempts (success & failures)
+-- Enables analysis of matching patterns and identification of data quality issues
+
+CREATE TABLE location_matching_audit (
+  id BIGSERIAL PRIMARY KEY,
+
+  -- Link to the khatiyan record that was being inserted
+  khatiyan_record_id BIGINT REFERENCES khatiyan_records(id) ON DELETE CASCADE,
+
+  -- What type of location was being matched
+  location_type TEXT NOT NULL CHECK (location_type IN ('village', 'tehsil')),
+
+  -- Input values from khatiyan_records
+  native_value TEXT,
+  english_value TEXT,
+
+  -- Matching result
+  match_status TEXT NOT NULL CHECK (match_status IN ('success', 'failed')),
+  matched_id BIGINT,  -- The ID from villages/tahasils table (NULL if failed)
+  master_table TEXT CHECK (master_table IN ('villages', 'tahasils')),
+
+  -- Which matching strategy succeeded (for analysis)
+  -- Examples: 'native_village->native_name', 'village->english_name', etc.
+  matched_by TEXT,
+
+  -- Resolution tracking (for failed matches)
+  resolved BOOLEAN DEFAULT FALSE,
+  resolution_notes TEXT,
+  resolved_by TEXT,  -- User/system who resolved it
+  resolved_at TIMESTAMP WITH TIME ZONE,
+
+  -- Timestamp
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Indexes for efficient querying
+CREATE INDEX idx_location_audit_khatiyan_id ON location_matching_audit(khatiyan_record_id);
+CREATE INDEX idx_location_audit_status ON location_matching_audit(match_status);
+CREATE INDEX idx_location_audit_type ON location_matching_audit(location_type);
+CREATE INDEX idx_location_audit_unresolved ON location_matching_audit(match_status, resolved) WHERE match_status = 'failed' AND resolved = FALSE;
+CREATE INDEX idx_location_audit_created ON location_matching_audit(created_at DESC);
+
+-- Composite index for failure analysis
+CREATE INDEX idx_location_audit_failures ON location_matching_audit(location_type, match_status) WHERE match_status = 'failed';
 
 -- ============================================================================
 -- Table: khatiyan_extractions
@@ -282,6 +357,58 @@ SELECT
 FROM khatiyan_extractions ke
 JOIN khatiyan_records kr ON ke.khatiyan_record_id = kr.id;
 
+-- View: Unresolved matching failures
+-- Shows all failed matches that haven't been resolved yet
+CREATE VIEW unresolved_location_failures AS
+SELECT
+  lma.id,
+  lma.khatiyan_record_id,
+  lma.location_type,
+  lma.native_value,
+  lma.english_value,
+  kr.district,
+  kr.tehsil,
+  kr.village,
+  lma.created_at,
+  lma.resolution_notes
+FROM location_matching_audit lma
+JOIN khatiyan_records kr ON lma.khatiyan_record_id = kr.id
+WHERE lma.match_status = 'failed'
+  AND lma.resolved = FALSE
+ORDER BY lma.created_at DESC;
+
+-- View: Matching statistics by location type
+CREATE VIEW location_matching_stats AS
+SELECT
+  location_type,
+  COUNT(*) as total_attempts,
+  SUM(CASE WHEN match_status = 'success' THEN 1 ELSE 0 END) as successful_matches,
+  SUM(CASE WHEN match_status = 'failed' THEN 1 ELSE 0 END) as failed_matches,
+  SUM(CASE WHEN match_status = 'failed' AND resolved = FALSE THEN 1 ELSE 0 END) as unresolved_failures,
+  ROUND(
+    100.0 * SUM(CASE WHEN match_status = 'success' THEN 1 ELSE 0 END) / COUNT(*),
+    2
+  ) as success_rate_percentage
+FROM location_matching_audit
+GROUP BY location_type;
+
+-- View: Most common failure patterns
+-- Shows which native/english value combinations fail most frequently
+CREATE VIEW common_matching_failures AS
+SELECT
+  location_type,
+  native_value,
+  english_value,
+  COUNT(*) as failure_count,
+  MAX(created_at) as last_failed_at,
+  SUM(CASE WHEN resolved = TRUE THEN 1 ELSE 0 END) as resolved_count,
+  SUM(CASE WHEN resolved = FALSE THEN 1 ELSE 0 END) as unresolved_count
+FROM location_matching_audit
+WHERE match_status = 'failed'
+GROUP BY location_type, native_value, english_value
+HAVING COUNT(*) > 1  -- Only show patterns that failed multiple times
+ORDER BY failure_count DESC, last_failed_at DESC;
+
 -- ============================================================================
 -- Helper Functions
 -- ============================================================================
@@ -305,6 +432,275 @@ CREATE TRIGGER update_khatiyan_extractions_updated_at
   BEFORE UPDATE ON khatiyan_extractions
   FOR EACH ROW
   EXECUTE FUNCTION update_updated_at_column();
+
+-- ============================================================================
+-- Function and Trigger: Auto-populate Location IDs in khatiyan_records
+-- ============================================================================
+-- Automatically populates district_id, tehsil_id, and village_id columns
+-- by matching text names against master tables (villages, tahasils)
+--
+-- Business Logic:
+-- 1. Match village name → get villages.id and villages.district_id
+-- 2. Match tehsil name → get tahasils.id
+-- 3. Validate consistency between matched records
+--
+-- Matching Strategy (tries in this order until a match is found):
+-- For each location (village/tehsil):
+--   1. Try native_village/native_tehsil against master.native_name
+--   2. Try native_village/native_tehsil against master.english_name
+--   3. Try village/tehsil against master.native_name
+--   4. Try village/tehsil against master.english_name
+-- All matches are case-insensitive with trimmed whitespace
+-- Use LIMIT 1 if multiple matches (takes first)
+
+CREATE OR REPLACE FUNCTION populate_khatiyan_location_ids()
+RETURNS TRIGGER AS $$
+DECLARE
+  matched_village_id bigint;
+  matched_village_district_id bigint;
+  matched_village_tahasil_id bigint;
+  matched_tehsil_id bigint;
+  matched_tehsil_district_id bigint;
+BEGIN
+  -- -------------------------------------------------------------------------
+  -- Step 1: Match VILLAGE name against villages table
+  -- Try native column first, then fall back to English column
+  -- -------------------------------------------------------------------------
+
+  -- Try matching native_village (if populated)
+  IF NEW.native_village IS NOT NULL AND TRIM(NEW.native_village) != '' THEN
+    -- Try native_village against villages.native_name
+    SELECT id, district_id, tahasil_id
+    INTO matched_village_id, matched_village_district_id, matched_village_tahasil_id
+    FROM villages
+    WHERE LOWER(TRIM(native_name)) = LOWER(TRIM(NEW.native_village))
+    LIMIT 1;
+
+    -- If no match, try native_village against villages.english_name
+    IF matched_village_id IS NULL THEN
+      SELECT id, district_id, tahasil_id
+      INTO matched_village_id, matched_village_district_id, matched_village_tahasil_id
+      FROM villages
+      WHERE LOWER(TRIM(english_name)) = LOWER(TRIM(NEW.native_village))
+      LIMIT 1;
+    END IF;
+  END IF;
+
+  -- If still no match, try the English village column
+  IF matched_village_id IS NULL AND NEW.village IS NOT NULL AND TRIM(NEW.village) != '' THEN
+    -- Try village against villages.native_name
+    SELECT id, district_id, tahasil_id
+    INTO matched_village_id, matched_village_district_id, matched_village_tahasil_id
+    FROM villages
+    WHERE LOWER(TRIM(native_name)) = LOWER(TRIM(NEW.village))
+    LIMIT 1;
+
+    -- If no match, try village against villages.english_name
+    IF matched_village_id IS NULL THEN
+      SELECT id, district_id, tahasil_id
+      INTO matched_village_id, matched_village_district_id, matched_village_tahasil_id
+      FROM villages
+      WHERE LOWER(TRIM(english_name)) = LOWER(TRIM(NEW.village))
+      LIMIT 1;
+    END IF;
+  END IF;
+
+  -- Populate the IDs from matched village
+  IF matched_village_id IS NOT NULL THEN
+    NEW.village_id := matched_village_id;
+    NEW.district_id := matched_village_district_id;
+
+    RAISE INFO 'Matched village (native: "%, english: "%") → village_id=%, district_id=%',
+               NEW.native_village, NEW.village, matched_village_id, matched_village_district_id;
+  ELSE
+    RAISE WARNING 'No match found for village (native: "%, english: "%")',
+                  NEW.native_village, NEW.village;
+  END IF;
+
+  -- -------------------------------------------------------------------------
+  -- Step 2: Match TEHSIL name against tahasils table
+  -- Try native column first, then fall back to English column
+  -- -------------------------------------------------------------------------
+
+  -- Try matching native_tehsil (if populated)
+  IF NEW.native_tehsil IS NOT NULL AND TRIM(NEW.native_tehsil) != '' THEN
+    -- Try native_tehsil against tahasils.native_name
+    SELECT id, district_id
+    INTO matched_tehsil_id, matched_tehsil_district_id
+    FROM tahasils
+    WHERE LOWER(TRIM(native_name)) = LOWER(TRIM(NEW.native_tehsil))
+    LIMIT 1;
+
+    -- If no match, try native_tehsil against tahasils.english_name
+    IF matched_tehsil_id IS NULL THEN
+      SELECT id, district_id
+      INTO matched_tehsil_id, matched_tehsil_district_id
+      FROM tahasils
+      WHERE LOWER(TRIM(english_name)) = LOWER(TRIM(NEW.native_tehsil))
+      LIMIT 1;
+    END IF;
+  END IF;
+
+  -- If still no match, try the English tehsil column
+  IF matched_tehsil_id IS NULL AND NEW.tehsil IS NOT NULL AND TRIM(NEW.tehsil) != '' THEN
+    -- Try tehsil against tahasils.native_name
+    SELECT id, district_id
+    INTO matched_tehsil_id, matched_tehsil_district_id
+    FROM tahasils
+    WHERE LOWER(TRIM(native_name)) = LOWER(TRIM(NEW.tehsil))
+    LIMIT 1;
+
+    -- If no match, try tehsil against tahasils.english_name
+    IF matched_tehsil_id IS NULL THEN
+      SELECT id, district_id
+      INTO matched_tehsil_id, matched_tehsil_district_id
+      FROM tahasils
+      WHERE LOWER(TRIM(english_name)) = LOWER(TRIM(NEW.tehsil))
+      LIMIT 1;
+    END IF;
+  END IF;
+
+  -- Populate tehsil_id
+  IF matched_tehsil_id IS NOT NULL THEN
+    NEW.tehsil_id := matched_tehsil_id;
+
+    RAISE INFO 'Matched tehsil (native: "%, english: "%") → tehsil_id=%',
+               NEW.native_tehsil, NEW.tehsil, matched_tehsil_id;
+  ELSE
+    RAISE WARNING 'No match found for tehsil (native: "%, english: "%")',
+                  NEW.native_tehsil, NEW.tehsil;
+  END IF;
+
+  -- -------------------------------------------------------------------------
+  -- Step 3: Data Consistency Validation
+  -- -------------------------------------------------------------------------
+
+  -- Validate: village.tahasil_id should match matched tehsil.id
+  IF matched_village_tahasil_id IS NOT NULL AND matched_tehsil_id IS NOT NULL THEN
+    IF matched_village_tahasil_id != matched_tehsil_id THEN
+      RAISE WARNING 'Data inconsistency detected: village "%" has tahasil_id=% but matched tehsil "%" has id=%',
+                    NEW.village, matched_village_tahasil_id, NEW.tehsil, matched_tehsil_id;
+    END IF;
+  END IF;
+
+  -- Validate: village.district_id should match tehsil.district_id
+  IF matched_village_district_id IS NOT NULL AND matched_tehsil_district_id IS NOT NULL THEN
+    IF matched_village_district_id != matched_tehsil_district_id THEN
+      RAISE WARNING 'Data inconsistency detected: village "%" has district_id=% but matched tehsil "%" has district_id=%',
+                    NEW.village, matched_village_district_id, NEW.tehsil, matched_tehsil_district_id;
+    END IF;
+  END IF;
+
+  -- Validate: district text matches the resolved district_id
+  -- (This requires querying the districts table - optional validation)
+  IF NEW.district IS NOT NULL AND NEW.district_id IS NOT NULL THEN
+    DECLARE
+      district_name_check TEXT;
+    BEGIN
+      SELECT native_name INTO district_name_check
+      FROM districts
+      WHERE id = NEW.district_id
+      LIMIT 1;
+
+      IF LOWER(TRIM(district_name_check)) != LOWER(TRIM(NEW.district)) THEN
+        -- Also try english_name
+        SELECT english_name INTO district_name_check
+        FROM districts
+        WHERE id = NEW.district_id
+        LIMIT 1;
+
+        IF district_name_check IS NULL OR LOWER(TRIM(district_name_check)) != LOWER(TRIM(NEW.district)) THEN
+          RAISE WARNING 'District text "%" does not match resolved district_id=% (expected "%")',
+                        NEW.district, NEW.district_id, district_name_check;
+        END IF;
+      END IF;
+    EXCEPTION
+      WHEN undefined_table THEN
+        -- districts table doesn't exist, skip validation
+        NULL;
+    END;
+  END IF;
+
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Trigger to auto-populate location IDs on INSERT
+CREATE TRIGGER trg_populate_khatiyan_location_ids
+  BEFORE INSERT ON khatiyan_records
+  FOR EACH ROW
+  EXECUTE FUNCTION populate_khatiyan_location_ids();
+
+-- ============================================================================
+-- Function and Trigger: Audit Location Matching Results
+-- ============================================================================
+-- Logs all matching attempts (success and failures) to location_matching_audit
+-- Runs AFTER INSERT so we have the khatiyan_record_id
+
+CREATE OR REPLACE FUNCTION audit_location_matching()
+RETURNS TRIGGER AS $$
+BEGIN
+  -- Audit VILLAGE matching
+  IF NEW.native_village IS NOT NULL OR NEW.village IS NOT NULL THEN
+    INSERT INTO location_matching_audit (
+      khatiyan_record_id,
+      location_type,
+      native_value,
+      english_value,
+      match_status,
+      matched_id,
+      master_table,
+      matched_by
+    ) VALUES (
+      NEW.id,
+      'village',
+      NEW.native_village,
+      NEW.village,
+      CASE WHEN NEW.village_id IS NOT NULL THEN 'success' ELSE 'failed' END,
+      NEW.village_id,
+      'villages',
+      CASE
+        WHEN NEW.village_id IS NOT NULL THEN 'matched'
+        ELSE NULL
+      END
+    );
+  END IF;
+
+  -- Audit TEHSIL matching
+  IF NEW.native_tehsil IS NOT NULL OR NEW.tehsil IS NOT NULL THEN
+    INSERT INTO location_matching_audit (
+      khatiyan_record_id,
+      location_type,
+      native_value,
+      english_value,
+      match_status,
+      matched_id,
+      master_table,
+      matched_by
+    ) VALUES (
+      NEW.id,
+      'tehsil',
+      NEW.native_tehsil,
+      NEW.tehsil,
+      CASE WHEN NEW.tehsil_id IS NOT NULL THEN 'success' ELSE 'failed' END,
+      NEW.tehsil_id,
+      'tahasils',
+      CASE
+        WHEN NEW.tehsil_id IS NOT NULL THEN 'matched'
+        ELSE NULL
+      END
+    );
+  END IF;
+
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Trigger to audit matching results AFTER INSERT
+CREATE TRIGGER trg_audit_location_matching
+  AFTER INSERT ON khatiyan_records
+  FOR EACH ROW
+  EXECUTE FUNCTION audit_location_matching();
 
 -- ============================================================================
 -- Example Queries
@@ -363,3 +759,58 @@ CREATE TRIGGER update_khatiyan_extractions_updated_at
 -- FROM khatiyan_extractions
 -- WHERE extraction_data->>'district' IS NOT NULL
 -- ORDER BY district;
+
+-- ============================================================================
+-- Location Matching Audit Queries
+-- ============================================================================
+
+-- View all unresolved failures
+-- SELECT * FROM unresolved_location_failures LIMIT 20;
+
+-- Get matching statistics
+-- SELECT * FROM location_matching_stats;
+
+-- Find most common failure patterns
+-- SELECT * FROM common_matching_failures LIMIT 20;
+
+-- Find all failures for a specific village name
+-- SELECT *
+-- FROM location_matching_audit
+-- WHERE location_type = 'village'
+--   AND match_status = 'failed'
+--   AND (native_value = 'ପାଟିଆ' OR english_value = 'Patia')
+-- ORDER BY created_at DESC;
+
+-- Mark a failure as resolved
+-- UPDATE location_matching_audit
+-- SET resolved = TRUE,
+--     resolution_notes = 'Added village to master table',
+--     resolved_by = 'admin',
+--     resolved_at = NOW()
+-- WHERE id = 123;
+
+-- Get overall match rate
+-- SELECT
+--   COUNT(*) as total_attempts,
+--   SUM(CASE WHEN match_status = 'success' THEN 1 ELSE 0 END) as successes,
+--   ROUND(100.0 * SUM(CASE WHEN match_status = 'success' THEN 1 ELSE 0 END) / COUNT(*), 2) as success_rate
+-- FROM location_matching_audit;
+
+-- Find khatiyan records with ANY failed matches
+-- SELECT DISTINCT kr.*
+-- FROM khatiyan_records kr
+-- JOIN location_matching_audit lma ON kr.id = lma.khatiyan_record_id
+-- WHERE lma.match_status = 'failed'
+--   AND lma.resolved = FALSE
+-- ORDER BY kr.created_at DESC;
+
+-- Analyze failures by date range
+-- SELECT
+--   DATE(created_at) as date,
+--   location_type,
+--   COUNT(*) as failure_count
+-- FROM location_matching_audit
+-- WHERE match_status = 'failed'
+--   AND created_at >= NOW() - INTERVAL '7 days'
+-- GROUP BY DATE(created_at), location_type
+-- ORDER BY date DESC, failure_count DESC;
