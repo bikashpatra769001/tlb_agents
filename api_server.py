@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import uvicorn
 import os
+import logging
 from anthropic import Anthropic
 from typing import Optional
 from dotenv import load_dotenv
@@ -22,6 +23,13 @@ load_dotenv()
 # Load secrets from AWS Parameter Store (with .env fallback for local dev)
 from aws_secrets import get_secrets
 secrets = get_secrets()
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Webpage Content Chat API")
 
@@ -99,13 +107,17 @@ prompt_service = None
 try:
     prompt_service_url = secrets.get("prompt_service_url", "https://5rp9zvhds7.ap-south-1.awsapprunner.com")
     cache_ttl = int(os.getenv("PROMPT_CACHE_TTL_SECONDS", "3600"))
+    max_retries = int(os.getenv("PROMPT_MAX_RETRIES", "3"))
+    timeout = float(os.getenv("PROMPT_TIMEOUT_SECONDS", "30.0"))
 
     prompt_service = PromptService(
         api_base_url=prompt_service_url,
         cache_ttl_seconds=cache_ttl,
-        fallback_dir="prompts"
+        fallback_dir="prompts",
+        max_retries=max_retries,
+        timeout=timeout
     )
-    print(f"✅ Prompt service initialized (url={prompt_service_url}, cache_ttl={cache_ttl}s)")
+    print(f"✅ Prompt service initialized (url={prompt_service_url}, cache_ttl={cache_ttl}s, max_retries={max_retries}, timeout={timeout}s)")
 except Exception as e:
     print(f"⚠️  Could not initialize prompt service: {e}")
 
@@ -121,6 +133,8 @@ async def load_ror_prompt_if_needed():
 
     This avoids using asyncio.run() at module level which creates and closes an event loop,
     interfering with Mangum's event loop management in Lambda.
+
+    After loading the prompt, recreates the RoR summarizer module so DSPy compiles with the new docstring.
     """
     global ROR_SUMMARY_PROMPT, ROR_SUMMARY_PROMPT_LOADED
 
@@ -130,26 +144,37 @@ async def load_ror_prompt_if_needed():
     try:
         if prompt_service:
             ror_prompt_id = int(os.getenv("ROR_SUMMARY_PROMPT_ID", "2"))
+            logger.info(f"Loading RoR summary prompt from service (id={ror_prompt_id})")
             ROR_SUMMARY_PROMPT = await prompt_service.get_prompt(
                 prompt_id=ror_prompt_id,
                 fallback_filename="ror_summary.txt"
             )
             # Update DSPy signature with fetched prompt
             SummarizeRoR.__doc__ = ROR_SUMMARY_PROMPT
-            print(f"✅ Loaded RoR prompt dynamically (id={ror_prompt_id})")
+            # Note: The prompt_service already logs the actual source (API/cache/file)
+            logger.info(f"✅ RoR prompt loaded successfully via prompt service (length={len(ROR_SUMMARY_PROMPT)} chars)")
         else:
-            # Fallback to local file
+            # Fallback to local file when prompt_service is unavailable
+            logger.warning("⚠️ PromptService not available, loading RoR prompt from local fallback file")
             prompt_path = os.path.join(os.path.dirname(__file__), "prompts", "ror_summary.txt")
             with open(prompt_path, 'r', encoding='utf-8') as f:
                 ROR_SUMMARY_PROMPT = f.read().strip()
             SummarizeRoR.__doc__ = ROR_SUMMARY_PROMPT
-            print("✅ Loaded RoR prompt from local file")
+            logger.info(f"✅ Loaded RoR prompt from local file: {prompt_path} (length={len(ROR_SUMMARY_PROMPT)} chars)")
+            print(f"✅ Loaded RoR prompt from local fallback file (PromptService unavailable)")
     except Exception as e:
+        logger.error(f"❌ Failed to load RoR prompt from all sources: {e}", exc_info=True)
         print(f"⚠️ Could not load RoR prompt: {e}")
         ROR_SUMMARY_PROMPT = "You are a land document expert. Analyze the RoR document and provide a detailed summary."
         SummarizeRoR.__doc__ = ROR_SUMMARY_PROMPT
+        logger.warning("Using hardcoded fallback RoR prompt")
     finally:
         ROR_SUMMARY_PROMPT_LOADED = True
+
+        # IMPORTANT: Recreate the RoR summarizer so DSPy compiles with the new docstring
+        # This ensures the loaded prompt (not the placeholder) is used
+        summarization_agent.ror_summarizer = dspy.ChainOfThought(SummarizeRoR)
+        logger.info("🔄 Recreated RoR summarizer with updated prompt")
 
 # ==================== DSPy Signatures ====================
 
@@ -259,10 +284,20 @@ class SummarizationAgent:
         self.summarizer = dspy.ChainOfThought(SummarizeContent)
         self.ror_summarizer = dspy.ChainOfThought(SummarizeRoR)
     
-    async def extract_khatiyan_details(self, content: str, title: str = "") -> dict:
-        """Extract Khatiyan details using DSPy"""
+    async def extract_khatiyan_details(self, content: str, title: str = "") -> tuple[dict, dict]:
+        """Extract Khatiyan details using DSPy
+
+        Returns:
+            tuple: (extraction_data, prompt_config)
+        """
         try:
             result = self.extractor(content=content, title=title)
+
+            # Capture the DSPy prompt immediately after the call
+            prompt_config = get_last_dspy_prompt(
+                signature_name="ExtractKhatiyan",
+                module_type="ChainOfThought"
+            )
 
             # Extract native language fields (may be None or empty)
             native_district = getattr(result, 'native_district', None) or None
@@ -275,7 +310,7 @@ class SummarizationAgent:
             print(f"   native_tehsil: {native_tehsil}")
             print(f"   native_village: {native_village}")
 
-            return {
+            extraction_data = {
                 # Location information (English)
                 "district": result.district or "Not found",
                 "tehsil": result.tehsil or "Not found",
@@ -302,9 +337,12 @@ class SummarizationAgent:
                 "special_comments": result.special_comments or "Not found",
                 "other_owners": result.other_owners or "Not found"
             }
+
+            return extraction_data, prompt_config
+
         except Exception as e:
             print(f"Error extracting Khatiyan details with DSPy: {e}")
-            return {
+            extraction_data = {
                 "district": "Extraction failed",
                 "tehsil": "Extraction failed",
                 "village": "Extraction failed",
@@ -322,6 +360,7 @@ class SummarizationAgent:
                 "special_comments": "Extraction failed",
                 "other_owners": "Extraction failed"
             }
+            return extraction_data, None
 
     async def summarize_content(self, content: str, title: str = "") -> str:
         """Summarize webpage content using DSPy"""
@@ -405,7 +444,7 @@ This page contains {word_count} words. Here's a brief preview:
 
 *Note: For a detailed AI-powered explanation, please set the ANTHROPIC_API_KEY environment variable.*"""
 
-    async def summarize_ror_document(self, content: str, title: str = "") -> str:
+    async def summarize_ror_document(self, content: str, title: str = "") -> tuple[str, dict]:
         """Generate comprehensive RoR summary with risk assessment and HTML formatting
 
         Uses the detailed RoR summary prompt from prompts/ror_summary.txt to:
@@ -414,17 +453,27 @@ This page contains {word_count} words. Here's a brief preview:
         - Identify risks (govt ownership, public land use, corporate ownership)
         - Provide color-coded HTML output
         - Suggest next steps
+
+        Returns:
+            tuple: (html_summary, prompt_config)
         """
         if not self.client:
-            return self._fallback_ror_summary(content, title)
+            return self._fallback_ror_summary(content, title), None
 
         try:
             result = self.ror_summarizer(ror_content=content, title=title)
-            return result.html_summary
+
+            # Capture the DSPy prompt immediately after the call
+            prompt_config = get_last_dspy_prompt(
+                signature_name="SummarizeRoR",
+                module_type="ChainOfThought"
+            )
+
+            return result.html_summary, prompt_config
 
         except Exception as e:
             print(f"Error with DSPy RoR summarization: {e}")
-            return self._fallback_ror_summary(content, title)
+            return self._fallback_ror_summary(content, title), None
 
     def _fallback_ror_summary(self, content: str, title: str) -> str:
         """Fallback RoR summary when Claude is not available"""
@@ -452,6 +501,45 @@ This page contains {word_count} words. Here's a brief preview:
 
 # Initialize the summarization agent
 summarization_agent = SummarizationAgent(anthropic_client)
+
+# ==================== DSPy Prompt Extraction ====================
+
+def get_last_dspy_prompt(signature_name: str = None, module_type: str = "ChainOfThought") -> Optional[dict]:
+    """Extract the last prompt sent to LLM from DSPy's LM history
+
+    Returns a dict containing:
+    - model: The model name used
+    - signature: The DSPy signature name
+    - dspy_module: The module type (ChainOfThought, Predict, etc)
+    - messages: The actual messages sent to the LLM
+    - temperature: Temperature setting (if available)
+    - max_tokens: Max tokens setting (if available)
+    """
+    try:
+        lm = dspy.settings.lm
+        if not lm or not hasattr(lm, 'history') or not lm.history:
+            logger.warning("No DSPy LM history available")
+            return None
+
+        # Get the last call from history
+        last_call = lm.history[-1]
+
+        # Extract prompt information
+        prompt_config = {
+            "model": getattr(lm, 'model', 'unknown'),
+            "signature": signature_name,
+            "dspy_module": module_type,
+            "messages": last_call.get('messages', []),
+            "temperature": getattr(lm, 'temperature', None) if hasattr(lm, 'temperature') else None,
+            "max_tokens": getattr(lm, 'max_tokens', None) if hasattr(lm, 'max_tokens') else None,
+        }
+
+        logger.info(f"Captured DSPy prompt for {signature_name} ({len(prompt_config['messages'])} messages)")
+        return prompt_config
+
+    except Exception as e:
+        logger.error(f"Error extracting DSPy prompt: {e}", exc_info=True)
+        return None
 
 # ==================== Supabase Storage Functions ====================
 
@@ -523,7 +611,7 @@ async def store_khatiyan_extraction(
     model_name: str,
     prompt_version: str = "v1",
     extraction_time_ms: int = None,
-    tokens_used: int = None
+    prompt_config: dict = None
 ) -> bool:
     """Store AI model extraction to Supabase with JSON-based schema"""
     if not supabase_client:
@@ -539,7 +627,7 @@ async def store_khatiyan_extraction(
             "extraction_data": extraction_data,  # All extracted fields stored as JSONB
             "extraction_status": "pending",  # Will be updated via user feedback
             "extraction_time_ms": extraction_time_ms,
-            "tokens_used": tokens_used
+            "prompt_config": prompt_config  # Store DSPy prompt and config
         }
 
         result = supabase_client.table("khatiyan_extractions").insert(data).execute()
@@ -550,62 +638,36 @@ async def store_khatiyan_extraction(
         print(f"❌ Error storing extraction: {e}")
         return False
 
-async def store_or_update_summary(
+async def store_khatiyan_summary(
     khatiyan_record_id: int,
     html_summary: str,
     model_provider: str,
     model_name: str,
     prompt_version: str = "v1",
-    generation_time_ms: int = None
+    generation_time_ms: int = None,
+    prompt_config: dict = None
 ) -> Optional[int]:
-    """Update existing extraction row with summary data, or create if doesn't exist"""
+    """Store AI-generated summary to khatiyan_summaries table"""
     if not supabase_client:
         print("⚠️  Supabase client not available - skipping summary storage")
         return None
 
     try:
-        # Try to find existing extraction row
-        result = supabase_client.table("khatiyan_extractions")\
-            .select("id")\
-            .eq("khatiyan_record_id", khatiyan_record_id)\
-            .eq("model_provider", model_provider)\
-            .eq("model_name", model_name)\
-            .eq("prompt_version", prompt_version)\
-            .limit(1)\
-            .execute()
-
-        update_data = {
+        data = {
+            "khatiyan_record_id": khatiyan_record_id,
+            "model_provider": model_provider,
+            "model_name": model_name,
+            "prompt_version": prompt_version,
             "summary_html": html_summary,
-            "summary_generation_time_ms": generation_time_ms,
-            "summarization_status": "pending"
+            "generation_time_ms": generation_time_ms,
+            "summarization_status": "pending",  # Will be updated via user feedback
+            "prompt_config": prompt_config  # Store DSPy prompt and config
         }
 
-        if result.data and len(result.data) > 0:
-            # Update existing row
-            extraction_id = result.data[0]["id"]
-            supabase_client.table("khatiyan_extractions")\
-                .update(update_data)\
-                .eq("id", extraction_id)\
-                .execute()
-            print(f"✅ Updated summary for extraction {extraction_id}")
-            return extraction_id
-        else:
-            # Create new row (extraction data may not exist yet)
-            # This handles case where user clicks "Summarize" before "Show Details"
-            insert_data = {
-                "khatiyan_record_id": khatiyan_record_id,
-                "model_provider": model_provider,
-                "model_name": model_name,
-                "prompt_version": prompt_version,
-                "extraction_data": {},  # Empty JSONB for now
-                **update_data
-            }
-            result = supabase_client.table("khatiyan_extractions")\
-                .insert(insert_data)\
-                .execute()
-            extraction_id = result.data[0]["id"]
-            print(f"✅ Created new extraction row {extraction_id} with summary")
-            return extraction_id
+        result = supabase_client.table("khatiyan_summaries").insert(data).execute()
+        summary_id = result.data[0]["id"]
+        print(f"✅ Stored summary {summary_id} for record {khatiyan_record_id}")
+        return summary_id
 
     except Exception as e:
         print(f"❌ Error storing summary: {e}")
@@ -616,7 +678,7 @@ async def get_cached_summary(
     model_name: str,
     prompt_version: str = "v1"
 ) -> Optional[dict]:
-    """Get cached summary from extraction row if exists and recent (<24h)"""
+    """Get cached summary from khatiyan_summaries table if exists and recent (<24h)"""
     if not supabase_client:
         print("⚠️  Supabase client not available - cannot retrieve cached summary")
         return None
@@ -625,12 +687,11 @@ async def get_cached_summary(
         # Calculate 24 hours ago timestamp
         twenty_four_hours_ago = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
 
-        result = supabase_client.table("khatiyan_extractions")\
-            .select("id, summary_html, summary_generation_time_ms, created_at")\
+        result = supabase_client.table("khatiyan_summaries")\
+            .select("id, summary_html, generation_time_ms, created_at")\
             .eq("khatiyan_record_id", khatiyan_record_id)\
             .eq("model_name", model_name)\
             .eq("prompt_version", prompt_version)\
-            .not_.is_("summary_html", "null")\
             .gte("created_at", twenty_four_hours_ago)\
             .order("created_at", desc=True)\
             .limit(1)\
@@ -638,7 +699,7 @@ async def get_cached_summary(
 
         if result.data and len(result.data) > 0:
             cached = result.data[0]
-            print(f"✅ Found cached summary (extraction_id: {cached['id']})")
+            print(f"✅ Found cached summary (summary_id: {cached['id']})")
             return cached
 
         return None
@@ -870,7 +931,7 @@ async def explain_content(webpage: WebpageContent, request: Request):
 
         # First, extract Khatiyan details to get unique identifiers
         extraction_start = time.time()
-        khatiyan_data = await summarization_agent.extract_khatiyan_details(text_content, webpage.title)
+        khatiyan_data, prompt_config = await summarization_agent.extract_khatiyan_details(text_content, webpage.title)
         extraction_time_ms = int((time.time() - extraction_start) * 1000)
         print(f"🔍 Extracted Khatiyan data in {extraction_time_ms}ms: {khatiyan_data}")
 
@@ -948,7 +1009,7 @@ async def explain_content(webpage: WebpageContent, request: Request):
                 model_name="claude-3-5-sonnet-20241022",
                 prompt_version="v1",  # Increment this when you optimize DSPy prompts
                 extraction_time_ms=extraction_time_ms,
-                tokens_used=None  # Could be tracked from Anthropic API response if needed
+                prompt_config=prompt_config  # Store the actual DSPy prompt
             )
 
         # Get simple explanation from Claude using DSPy
@@ -1010,7 +1071,7 @@ async def get_extraction(webpage: WebpageContent, request: Request):
         text_content = webpage.content.get('text', '')
 
         # Extract khatiyan identifiers from the current page
-        khatiyan_data = await summarization_agent.extract_khatiyan_details(text_content, webpage.title)
+        khatiyan_data, _ = await summarization_agent.extract_khatiyan_details(text_content, webpage.title)
 
         district = khatiyan_data.get("district", "")
         tehsil = khatiyan_data.get("tehsil", "")
@@ -1157,13 +1218,14 @@ async def submit_feedback(feedback: FeedbackRequest, request: Request):
 async def submit_summary_feedback(feedback: FeedbackRequest, request: Request):
     """
     Submit user feedback on summary quality (thumbs up/down)
-    Stores feedback status in summarization_status column, optional comments in summarization_user_feedback
+    Stores feedback in khatiyan_summaries table
 
-    Note: Reuses FeedbackRequest model and extraction_id field (same table, different columns)
+    Note: Uses extraction_id field from FeedbackRequest model but it refers to summary_id
     """
     try:
         tester_id = get_tester_id(request)
-        print(f"👍👎 [Tester: {tester_id}] /submit-summary-feedback: {feedback.feedback} for extraction {feedback.extraction_id}")
+        summary_id = feedback.extraction_id  # Reuse extraction_id field for summary_id
+        print(f"👍👎 [Tester: {tester_id}] /submit-summary-feedback: {feedback.feedback} for summary {summary_id}")
         if not supabase_client:
             raise HTTPException(
                 status_code=503,
@@ -1177,19 +1239,19 @@ async def submit_summary_feedback(feedback: FeedbackRequest, request: Request):
                 detail="Feedback must be 'correct' or 'wrong'"
             )
 
-        # Update the extraction record - store feedback status in summarization_status
+        # Update the summary record - store feedback status in summarization_status
         update_data = {
             "summarization_status": feedback.feedback,  # 'correct' or 'wrong'
-            "summary_feedback_timestamp": datetime.now(timezone.utc).isoformat()
+            "feedback_timestamp": datetime.now(timezone.utc).isoformat()
         }
 
         # Store optional user comment in summarization_user_feedback column
         if feedback.user_comment:
             update_data["summarization_user_feedback"] = feedback.user_comment
 
-        result = supabase_client.table("khatiyan_extractions")\
+        result = supabase_client.table("khatiyan_summaries")\
             .update(update_data)\
-            .eq("id", feedback.extraction_id)\
+            .eq("id", summary_id)\
             .execute()
 
         if not result.data:
@@ -1245,7 +1307,7 @@ async def summarize_page(webpage: WebpageContent, request: Request):
 
         # Extract khatiyan details to get identifiers for caching
         extraction_start = time.time()
-        khatiyan_data = await summarization_agent.extract_khatiyan_details(
+        khatiyan_data, _ = await summarization_agent.extract_khatiyan_details(
             text_content, webpage.title
         )
 
@@ -1282,35 +1344,36 @@ async def summarize_page(webpage: WebpageContent, request: Request):
 
         # Return cached summary if available
         if cached_summary:
-            print(f"📦 Returning cached summary (extraction_id: {cached_summary['id']})")
+            print(f"📦 Returning cached summary (summary_id: {cached_summary['id']})")
             return {
                 "status": "success",
                 "url": webpage.url,
                 "title": webpage.title,
                 "html_summary": cached_summary["summary_html"],
-                "generation_time_ms": cached_summary.get("summary_generation_time_ms", 0),
-                "extraction_id": cached_summary["id"],
+                "generation_time_ms": cached_summary.get("generation_time_ms", 0),
+                "summary_id": cached_summary["id"],
                 "cached": True
             }
 
         # Generate new summary using DSPy
         summary_start = time.time()
-        html_summary = await summarization_agent.summarize_ror_document(
+        html_summary, prompt_config = await summarization_agent.summarize_ror_document(
             text_content,
             webpage.title
         )
         summary_time_ms = int((time.time() - summary_start) * 1000)
 
         # Store summary in database
-        extraction_id = None
+        summary_id = None
         if record_id:
-            extraction_id = await store_or_update_summary(
+            summary_id = await store_khatiyan_summary(
                 khatiyan_record_id=record_id,
                 html_summary=html_summary,
                 model_provider="anthropic",
                 model_name="claude-3-5-sonnet-20241022",
                 prompt_version="v1",
-                generation_time_ms=summary_time_ms
+                generation_time_ms=summary_time_ms,
+                prompt_config=prompt_config  # Store the actual DSPy prompt
             )
 
         print(f"📝 Generated new summary in {summary_time_ms}ms for: {webpage.url}")
@@ -1321,7 +1384,7 @@ async def summarize_page(webpage: WebpageContent, request: Request):
             "title": webpage.title,
             "html_summary": html_summary,
             "generation_time_ms": summary_time_ms,
-            "extraction_id": extraction_id,
+            "summary_id": summary_id,
             "cached": False
         }
 
