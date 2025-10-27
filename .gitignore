@@ -277,3 +277,5 @@ lambda-layer.zip
 lambda-deployment/
 bhulekha-extension-v*.zip
 api-gateway-info.txt
+debug_html/
+sample_bhulekha.html
