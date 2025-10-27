@@ -198,8 +198,8 @@ CREATE TABLE khatiyan_extractions (
   khatiyan_record_id BIGINT NOT NULL REFERENCES khatiyan_records(id) ON DELETE CASCADE,
 
   -- Model identification
-  model_provider TEXT NOT NULL,  -- 'anthropic', 'openai', 'mistral', 'google', etc.
-  model_name TEXT NOT NULL,      -- 'claude-3-5-sonnet-20241022', 'gpt-4-turbo', etc.
+  model_provider TEXT NOT NULL,  -- 'anthropic', 'openai', 'mistral', 'google', 'html_parser', etc.
+  model_name TEXT NOT NULL,      -- 'claude-3-5-sonnet-20241022', 'gpt-4-turbo', 'beautifulsoup4', etc.
 
   -- Prompt tracking (for DSPy optimization)
   prompt_version TEXT DEFAULT 'v1',  -- Track DSPy signature versions
@@ -212,6 +212,10 @@ CREATE TABLE khatiyan_extractions (
 
   -- Quality and validation
   extraction_status TEXT CHECK (extraction_status IN ('pending', 'correct', 'wrong', 'needs_review')),
+
+  -- Extraction method tracking (HTML parser vs LLM)
+  extraction_method TEXT CHECK (extraction_method IN ('html_parser', 'llm_fallback', 'llm_only') OR extraction_method IS NULL),
+  parser_confidence TEXT CHECK (parser_confidence IN ('high', 'medium', 'low') OR parser_confidence IS NULL),
 
   -- Performance metrics
   extraction_time_ms INTEGER,    -- Extraction duration in milliseconds
@@ -234,6 +238,7 @@ CREATE INDEX idx_extractions_model ON khatiyan_extractions(model_provider, model
 CREATE INDEX idx_extractions_status ON khatiyan_extractions(extraction_status);
 CREATE INDEX idx_extractions_prompt ON khatiyan_extractions(prompt_version);
 CREATE INDEX idx_extractions_created ON khatiyan_extractions(created_at DESC);
+CREATE INDEX idx_extractions_method ON khatiyan_extractions(extraction_method);  -- Monitor parser vs LLM usage
 
 -- Composite index for model comparison queries
 CREATE INDEX idx_extractions_comparison ON khatiyan_extractions(khatiyan_record_id, model_name, extraction_status);
@@ -483,6 +488,20 @@ GROUP BY location_type, native_value, english_value
 HAVING COUNT(*) > 1  -- Only show patterns that failed multiple times
 ORDER BY failure_count DESC, last_failed_at DESC;
 
+-- View : khatiyan_extractions Evaluation dataset
+CREATE OR REPLACE VIEW khatiyan_extraction_eval_dataset AS
+        SELECT
+            e.id,
+            e.khatiyan_record_id,
+            r.raw_html as khatiyan_raw_html,
+            r.raw_content as khatiyan_raw_text,
+            e.prompt_config,
+            e.model_name,
+            e.extraction_data,
+            e.created_at,
+            e.updated_at
+        FROM khatiyan_extractions e
+        INNER JOIN khatiyan_records r ON e.khatiyan_record_id = r.id;
 -- ============================================================================
 -- Helper Functions
 -- ============================================================================
@@ -985,3 +1004,77 @@ WHERE district_source_id IS NOT NULL
 --   AND created_at >= NOW() - INTERVAL '7 days'
 -- GROUP BY DATE(created_at), location_type
 -- ORDER BY date DESC, failure_count DESC;
+
+-- ============================================================================
+-- Migration: Add HTML Parser Support (for existing databases)
+-- ============================================================================
+-- Run these ALTER statements to add HTML parser tracking to existing databases
+--
+-- These columns were added in the schema above, but if you're upgrading an
+-- existing database, you'll need to run these manually:
+
+-- Add extraction_method column
+ALTER TABLE khatiyan_extractions ADD COLUMN IF NOT EXISTS extraction_method TEXT;
+ALTER TABLE khatiyan_extractions ADD CONSTRAINT check_extraction_method
+  CHECK (extraction_method IN ('html_parser', 'llm_fallback', 'llm_only') OR extraction_method IS NULL);
+
+-- Add parser_confidence column
+ALTER TABLE khatiyan_extractions ADD COLUMN IF NOT EXISTS parser_confidence TEXT;
+ALTER TABLE khatiyan_extractions ADD CONSTRAINT check_parser_confidence
+  CHECK (parser_confidence IN ('high', 'medium', 'low') OR parser_confidence IS NULL);
+
+-- Add index for extraction_method
+CREATE INDEX IF NOT EXISTS idx_extractions_method ON khatiyan_extractions(extraction_method);
+
+-- ============================================================================
+-- Monitoring Queries for HTML Parser Performance
+-- ============================================================================
+
+-- Check parser vs LLM usage distribution
+-- SELECT
+--   extraction_method,
+--   COUNT(*) as count,
+--   AVG(extraction_time_ms) as avg_time_ms,
+--   MIN(extraction_time_ms) as min_time_ms,
+--   MAX(extraction_time_ms) as max_time_ms
+-- FROM khatiyan_extractions
+-- WHERE created_at > NOW() - INTERVAL '7 days'
+-- GROUP BY extraction_method;
+
+-- Check parser confidence distribution
+-- SELECT
+--   parser_confidence,
+--   COUNT(*) as count,
+--   AVG(extraction_time_ms) as avg_time_ms
+-- FROM khatiyan_extractions
+-- WHERE extraction_method = 'html_parser'
+--   AND created_at > NOW() - INTERVAL '7 days'
+-- GROUP BY parser_confidence;
+
+-- Find cases where parser fell back to LLM
+-- SELECT
+--   ke.id,
+--   ke.extraction_method,
+--   ke.parser_confidence,
+--   ke.extraction_time_ms,
+--   kr.district,
+--   kr.tehsil,
+--   kr.village,
+--   kr.khatiyan_number,
+--   ke.created_at
+-- FROM khatiyan_extractions ke
+-- JOIN khatiyan_records kr ON ke.khatiyan_record_id = kr.id
+-- WHERE ke.extraction_method = 'llm_fallback'
+-- ORDER BY ke.created_at DESC
+-- LIMIT 20;
+
+-- Compare extraction accuracy: HTML parser vs LLM
+-- SELECT
+--   extraction_method,
+--   extraction_status,
+--   COUNT(*) as count
+-- FROM khatiyan_extractions
+-- WHERE created_at > NOW() - INTERVAL '7 days'
+--   AND extraction_status IN ('correct', 'wrong')
+-- GROUP BY extraction_method, extraction_status
+-- ORDER BY extraction_method, extraction_status;

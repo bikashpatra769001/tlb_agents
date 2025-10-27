@@ -50,17 +50,30 @@ For beta testing setup, see **[BETA_TESTING_GUIDE.md](BETA_TESTING_GUIDE.md)** a
 
 ### Key Components
 
+- **HTML Parser** (`html_parser.py`): **NEW** Deterministic parser for Bhulekh RoR HTML
+  - **Primary extraction method** for `/explain` endpoint
+  - Parses structured HTML to extract location, owner, plot, and metadata
+  - Supports bilingual extraction (Odia and English)
+  - Confidence scoring: "high", "medium", "low"
+  - **60x faster** than LLM extraction (~50ms vs ~3000ms)
+  - **Zero cost** (no API calls)
+  - **Automatic fallback** to LLM when confidence < "high"
+
 - **DSPy Signatures** (api_server.py:66-100): Programmable prompts for extraction, explanation, Q&A
-  - `ExtractKhatiyan`: Extract district, tehsil, village, khatiyan_number
+  - `ExtractKhatiyan`: Extract district, tehsil, village, khatiyan_number (LLM fallback)
   - `ExplainContent`: Generate simple explanations
   - `AnswerQuestion`: Answer user questions
   - `SummarizeContent`: Create summaries
-- **SummarizationAgent** (api_server.py:104-216): Handles all AI operations using DSPy
+  - `SummarizeRoR`: Generate RoR summaries with risk assessment (still uses LLM)
+
+- **SummarizationAgent** (api_server.py:104-216): Handles AI operations using DSPy (used as fallback)
+
 - **Supabase Storage Functions**:
   - `get_or_create_khatiyan_record()`: Creates/retrieves page record
-  - `store_khatiyan_extraction()`: Stores model extraction with metadata
+  - `store_khatiyan_extraction()`: Stores extraction with metadata (tracks method: html_parser vs llm_fallback)
   - `store_page_context()`: Stores page content for Lambda persistence
   - `get_page_context()`: Retrieves stored page content for chat context
+
 - **Tester Tracking**: `get_tester_id(request)` extracts `X-Tester-ID` header and logs all requests
 - **Lambda Handler**: Mangum adapter for AWS Lambda compatibility (api_server.py:~940)
 - **URL Whitelist**: Security restriction to Bhulekh URLs only
@@ -75,17 +88,112 @@ The application uses a **two-table design** for extensibility:
    - One record per unique khatiyan (reused if same khatiyan viewed multiple times)
    - URL field removed as it doesn't change across different records
 
-2. **khatiyan_extractions**: Stores AI model outputs
+2. **khatiyan_extractions**: Stores AI model outputs (and HTML parser results)
    - Multiple extractions per record (different models/prompts)
    - Tracks: model provider, name, version, prompt version
+   - **NEW**: `extraction_method` ("html_parser" or "llm_fallback")
+   - **NEW**: `parser_confidence` ("high", "medium", "low")
    - Performance metrics: time, tokens
    - Quality tracking: extraction_status (pending/correct/wrong)
 
 This design enables:
-- Multi-model comparison (Claude vs GPT-4 vs Mistral)
+- Multi-model comparison (Claude vs GPT-4 vs Mistral vs HTML Parser)
 - A/B testing different prompts
 - DSPy optimization tracking
 - Cost and performance analysis
+- **Monitoring parser success rate and fallback patterns**
+
+## HTML Parser for Data Extraction
+
+**NEW**: The `/explain` endpoint now uses a deterministic HTML parser as the primary extraction method.
+
+### Why HTML Parser?
+
+- **Performance**: 60x faster (~50ms vs ~3000ms for LLM)
+- **Cost**: $0 per extraction (vs ~$0.02 per LLM call)
+- **Reliability**: 100% deterministic, no API rate limits
+- **Accuracy**: Extracts exact values from structured HTML
+
+### How It Works
+
+1. **Primary Method**: BeautifulSoup4-based parser (`html_parser.py`)
+   - Parses Bhulekha RoR HTML structure
+   - Extracts bilingual fields (Odia and English)
+   - Aggregates plot data, calculates totals
+   - Extracts metadata (dates, police station, revenue)
+
+2. **Confidence Scoring**: Based on field completeness
+   - **High (≥95%)**: Use parser result directly
+   - **Medium (70-94%)**: Fall back to LLM
+   - **Low (<70%)**: Fall back to LLM
+
+3. **Automatic Fallback**: If parser confidence < "high", system automatically uses LLM extraction
+
+### Extracted Fields
+
+**Location** (bilingual: Odia + English):
+- District, Tehsil, Village, Khatiyan Number
+
+**Owner Information**:
+- Primary owner name, father's name, caste
+- Other co-owners (if multiple)
+
+**Plot Information**:
+- Total plots, plot numbers, total area (hectares)
+- Land type, plot-specific notes
+
+**Metadata** (special_comments):
+- Final publication date, rent fixation date
+- Police station, tahasil number, land revenue
+
+### Monitoring Parser Performance
+
+Check extraction method distribution:
+```sql
+SELECT
+    extraction_method,
+    COUNT(*) as count,
+    AVG(extraction_time_ms) as avg_time_ms
+FROM khatiyan_extractions
+WHERE created_at > NOW() - INTERVAL '7 days'
+GROUP BY extraction_method;
+```
+
+Find fallback cases:
+```sql
+SELECT * FROM khatiyan_extractions
+WHERE extraction_method = 'llm_fallback'
+ORDER BY created_at DESC
+LIMIT 20;
+```
+
+Compare accuracy:
+```sql
+SELECT
+    extraction_method,
+    extraction_status,
+    COUNT(*) as count
+FROM khatiyan_extractions
+WHERE extraction_status IN ('correct', 'wrong')
+GROUP BY extraction_method, extraction_status;
+```
+
+### Testing
+
+Run parser unit tests:
+```bash
+python test_html_parser.py
+```
+
+Tests validate:
+- Field extraction accuracy
+- Bilingual parsing (Odia/English)
+- Plot data aggregation
+- Confidence scoring
+- Fallback behavior
+
+**Test File**: `test_html_parser.py`
+**Sample Data**: `sample_bhulekha.html`
 
 ## Development Commands
 

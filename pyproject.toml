@@ -6,12 +6,17 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "anthropic>=0.68.1",
+    "beautifulsoup4>=4.12.0",
     "boto3>=1.35.0",
     "dspy-ai>=2.5.0",
     "fastapi>=0.117.1",
     "httpx>=0.28.1",
+    "lxml>=4.9.0",
     "mangum>=0.17.0",
     "python-dotenv>=1.1.1",
     "supabase>=2.10.0",
     "uvicorn>=0.37.0",
 ]
+
+[tool.uv.workspace]
+members = ["tlb_eval"]

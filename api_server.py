@@ -16,6 +16,7 @@ import dspy
 from supabase import create_client, Client
 import asyncio
 from prompt_service import PromptService
+from html_parser import BhulekhaHTMLParser
 
 # Load environment variables from .env file
 load_dotenv()
@@ -611,9 +612,11 @@ async def store_khatiyan_extraction(
     model_name: str,
     prompt_version: str = "v1",
     extraction_time_ms: int = None,
-    prompt_config: dict = None
+    prompt_config: dict = None,
+    extraction_method: str = None,
+    parser_confidence: str = None
 ) -> bool:
-    """Store AI model extraction to Supabase with JSON-based schema"""
+    """Store AI model or HTML parser extraction to Supabase with JSON-based schema"""
     if not supabase_client:
         print("⚠️  Supabase client not available - skipping data storage")
         return False
@@ -627,7 +630,9 @@ async def store_khatiyan_extraction(
             "extraction_data": extraction_data,  # All extracted fields stored as JSONB
             "extraction_status": "pending",  # Will be updated via user feedback
             "extraction_time_ms": extraction_time_ms,
-            "prompt_config": prompt_config  # Store DSPy prompt and config
+            "prompt_config": prompt_config,  # Store DSPy prompt and config
+            "extraction_method": extraction_method,  # "html_parser" or "llm_fallback"
+            "parser_confidence": parser_confidence  # "high", "medium", "low" (None for LLM)
         }
 
         result = supabase_client.table("khatiyan_extractions").insert(data).execute()
@@ -929,11 +934,32 @@ async def explain_content(webpage: WebpageContent, request: Request):
         cached_explanation = None
         record_id = None
 
-        # First, extract Khatiyan details to get unique identifiers
+        # Try HTML parser first for deterministic extraction
         extraction_start = time.time()
-        khatiyan_data, prompt_config = await summarization_agent.extract_khatiyan_details(text_content, webpage.title)
+        parser = BhulekhaHTMLParser(html_content)
+        khatiyan_data, confidence = parser.extract_khatiyan_details()
         extraction_time_ms = int((time.time() - extraction_start) * 1000)
-        print(f"🔍 Extracted Khatiyan data in {extraction_time_ms}ms: {khatiyan_data}")
+
+        extraction_method = "html_parser"
+        parser_confidence = confidence
+        prompt_config = None
+
+        print(f"🔍 HTML parser extracted data in {extraction_time_ms}ms with {confidence} confidence")
+
+        # Fallback to LLM if parser confidence is not high
+        if confidence != "high":
+            logger.info(f"Parser confidence {confidence}, falling back to LLM extraction")
+            print(f"⚠️  Parser confidence {confidence}, using LLM fallback")
+
+            extraction_start = time.time()
+            khatiyan_data, prompt_config = await summarization_agent.extract_khatiyan_details(text_content, webpage.title)
+            extraction_time_ms = int((time.time() - extraction_start) * 1000)
+            extraction_method = "llm_fallback"
+            parser_confidence = None  # Not applicable for LLM extraction
+
+            print(f"🤖 LLM extracted data in {extraction_time_ms}ms: {khatiyan_data}")
+        else:
+            print(f"✅ Using HTML parser extraction: {khatiyan_data}")
 
         # Now check if we have this record in database
         if supabase_client and khatiyan_data:
@@ -1002,14 +1028,24 @@ async def explain_content(webpage: WebpageContent, request: Request):
 
         # Store extraction to Supabase (if not cached and record exists)
         if record_id and not cached_extraction:
+            # Set model provider and name based on extraction method
+            if extraction_method == "html_parser":
+                model_provider = "html_parser"
+                model_name = "beautifulsoup4"
+            else:
+                model_provider = "anthropic"
+                model_name = "claude-3-5-sonnet-20241022"
+
             await store_khatiyan_extraction(
                 khatiyan_record_id=record_id,
                 extraction_data=khatiyan_data,
-                model_provider="anthropic",
-                model_name="claude-3-5-sonnet-20241022",
+                model_provider=model_provider,
+                model_name=model_name,
                 prompt_version="v1",  # Increment this when you optimize DSPy prompts
                 extraction_time_ms=extraction_time_ms,
-                prompt_config=prompt_config  # Store the actual DSPy prompt
+                prompt_config=prompt_config,  # Store the actual DSPy prompt (None for HTML parser)
+                extraction_method=extraction_method,
+                parser_confidence=parser_confidence
             )
 
         # Get simple explanation from Claude using DSPy
