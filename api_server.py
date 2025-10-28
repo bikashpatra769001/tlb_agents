@@ -232,6 +232,37 @@ class ExplainContent(dspy.Signature):
     title: str = dspy.InputField(desc="The webpage title")
     explanation: str = dspy.OutputField(desc="A simple explanation in plain English")
 
+class TranslateOdiaToEnglish(dspy.Signature):
+    """Translate a structured Khatiyan land record JSON from Odia (both keys and values) to English (both keys and values).
+
+    CRITICAL TRANSLATION REQUIREMENTS:
+    1. Translate ALL Odia keys to their English equivalents (e.g., ଜିଲ୍ଲା → district, ମାଲିକ_ନାମ → owner_name)
+    2. Translate ALL Odia values to English:
+       - Place names: Use official English names when available (e.g., କଟକ → Cuttack, ଖୋର୍ଦ୍ଧା → Khordha)
+       - Person names: Use proper English transliteration (e.g., ସୁରେଶ କୁମାର → Suresh Kumar)
+       - Caste names: Transliterate properly (e.g., ଖଣ୍ଡାୟତ → Khandayat)
+       - Land types: Translate descriptive terms (e.g., ଘରବାଡି → Gharabari/Residential)
+    3. Preserve the exact same JSON structure as input
+    4. Keep numeric values EXACTLY as-is (plot numbers, areas, dates, etc.)
+    5. Return valid JSON format with English keys following this mapping:
+       - ଜିଲ୍ଲା → district
+       - ତହସିଲ → tehsil
+       - ଗ୍ରାମ → village
+       - ଖତିୟାନ_ନମ୍ବର → khatiyan_number
+       - ମାଲିକ_ନାମ → owner_name
+       - ପିତା_ନାମ → father_name
+       - ଜାତି → caste
+       - ମୋଟ_ପ୍ଲଟ → total_plots
+       - ପ୍ଲଟ_ନମ୍ବର → plot_numbers
+       - ମୋଟ_କ୍ଷେତ୍ରଫଳ → total_area
+       - ଜମି_ପ୍ରକାର → land_type
+       - ଅନ୍ୟ_ମାଲିକ → other_owners
+       - ବିଶେଷ_ମନ୍ତବ୍ୟ → special_comments
+    """
+
+    odia_json: str = dspy.InputField(desc="JSON string with Odia keys and Odia values extracted from Bhulekha RoR document")
+    english_json: str = dspy.OutputField(desc="JSON string with English keys and English translated values, maintaining the same structure")
+
 class AnswerQuestion(dspy.Signature):
     """Answer user questions about webpage content accurately based only on available information."""
 
@@ -445,6 +476,52 @@ This page contains {word_count} words. Here's a brief preview:
 
 *Note: For a detailed AI-powered explanation, please set the ANTHROPIC_API_KEY environment variable.*"""
 
+    async def translate_odia_to_english(self, odia_data: dict) -> dict:
+        """Translate Odia JSON (Odia keys + Odia values) to English JSON (English keys + English values)
+
+        Args:
+            odia_data: Dictionary with Odia keys and Odia values from HTML parser
+
+        Returns:
+            Dictionary with English keys and English translated values
+
+        Raises:
+            Exception: If translation fails or produces invalid JSON
+        """
+        if not self.client:
+            raise Exception("ANTHROPIC_API_KEY not set - translation requires Claude API access")
+
+        import json
+
+        try:
+            # Initialize translator
+            translator = dspy.ChainOfThought(TranslateOdiaToEnglish)
+
+            # Convert dict to JSON string for LLM
+            odia_json_str = json.dumps(odia_data, ensure_ascii=False, indent=2)
+
+            print(f"🔄 Translating Odia JSON to English via LLM...")
+            print(f"   Input: {odia_json_str[:100]}...")
+
+            # Call LLM for translation
+            result = translator(odia_json=odia_json_str)
+
+            # Parse the English JSON response
+            english_data = json.loads(result.english_json)
+
+            print(f"✅ Translation complete: {len(english_data)} fields translated")
+
+            return english_data
+
+        except json.JSONDecodeError as e:
+            print(f"❌ Error: LLM returned invalid JSON: {e}")
+            print(f"   Raw response: {result.english_json}")
+            raise Exception(f"Translation failed - invalid JSON from LLM: {e}")
+
+        except Exception as e:
+            print(f"❌ Error translating Odia to English: {e}")
+            raise
+
     async def summarize_ror_document(self, content: str, title: str = "") -> tuple[str, dict]:
         """Generate comprehensive RoR summary with risk assessment and HTML formatting
 
@@ -607,7 +684,8 @@ async def get_or_create_khatiyan_record(
 
 async def store_khatiyan_extraction(
     khatiyan_record_id: int,
-    extraction_data: dict,
+    extraction_data_en: dict,
+    extraction_data_od: dict,
     model_provider: str,
     model_name: str,
     prompt_version: str = "v1",
@@ -616,7 +694,7 @@ async def store_khatiyan_extraction(
     extraction_method: str = None,
     parser_confidence: str = None
 ) -> bool:
-    """Store AI model or HTML parser extraction to Supabase with JSON-based schema"""
+    """Store AI model or HTML parser extraction to Supabase with dual-language JSON schema"""
     if not supabase_client:
         print("⚠️  Supabase client not available - skipping data storage")
         return False
@@ -627,16 +705,17 @@ async def store_khatiyan_extraction(
             "model_provider": model_provider,
             "model_name": model_name,
             "prompt_version": prompt_version,
-            "extraction_data": extraction_data,  # All extracted fields stored as JSONB
+            "extraction_data_en": extraction_data_en,  # English JSON (English keys + values)
+            "extraction_data_od": extraction_data_od,  # Odia JSON (Odia keys + values)
             "extraction_status": "pending",  # Will be updated via user feedback
             "extraction_time_ms": extraction_time_ms,
             "prompt_config": prompt_config,  # Store DSPy prompt and config
-            "extraction_method": extraction_method,  # "html_parser" or "llm_fallback"
-            "parser_confidence": parser_confidence  # "high", "medium", "low" (None for LLM)
+            "extraction_method": extraction_method,  # "html_parser" only (no LLM fallback)
+            "parser_confidence": parser_confidence  # "high", "medium", "low"
         }
 
         result = supabase_client.table("khatiyan_extractions").insert(data).execute()
-        print(f"✅ Stored extraction from {model_name}: {extraction_data.get('khatiyan_number')}")
+        print(f"✅ Stored dual-language extraction from {model_name}: {extraction_data_en.get('khatiyan_number')}")
         return True
 
     except Exception as e:
@@ -934,40 +1013,51 @@ async def explain_content(webpage: WebpageContent, request: Request):
         cached_explanation = None
         record_id = None
 
-        # Try HTML parser first for deterministic extraction
+        # Step 1: Extract Odia JSON from HTML using parser
         extraction_start = time.time()
         parser = BhulekhaHTMLParser(html_content)
-        khatiyan_data, confidence = parser.extract_khatiyan_details()
+        khatiyan_data_od, confidence = parser.extract_khatiyan_details()
         extraction_time_ms = int((time.time() - extraction_start) * 1000)
 
         extraction_method = "html_parser"
         parser_confidence = confidence
         prompt_config = None
 
-        print(f"🔍 HTML parser extracted data in {extraction_time_ms}ms with {confidence} confidence")
+        print(f"🔍 HTML parser extracted Odia data in {extraction_time_ms}ms with {confidence} confidence")
 
-        # Fallback to LLM if parser confidence is not high
+        # If parser confidence is not high, return error to user
         if confidence != "high":
-            logger.info(f"Parser confidence {confidence}, falling back to LLM extraction")
-            print(f"⚠️  Parser confidence {confidence}, using LLM fallback")
+            logger.warning(f"Parser confidence {confidence}, returning error to user")
+            print(f"❌ Parser confidence {confidence}, extraction failed")
 
-            extraction_start = time.time()
-            khatiyan_data, prompt_config = await summarization_agent.extract_khatiyan_details(text_content, webpage.title)
-            extraction_time_ms = int((time.time() - extraction_start) * 1000)
-            extraction_method = "llm_fallback"
-            parser_confidence = None  # Not applicable for LLM extraction
+            raise HTTPException(
+                status_code=422,
+                detail=f"Unable to extract data from this page. Parser confidence: {confidence}. Please verify the page format or try a different RoR page."
+            )
 
-            print(f"🤖 LLM extracted data in {extraction_time_ms}ms: {khatiyan_data}")
-        else:
-            print(f"✅ Using HTML parser extraction: {khatiyan_data}")
+        print(f"✅ Extracted Odia JSON: {khatiyan_data_od}")
+
+        # Step 2: Translate Odia JSON to English JSON using LLM
+        translation_start = time.time()
+        try:
+            khatiyan_data_en = await summarization_agent.translate_odia_to_english(khatiyan_data_od)
+            translation_time_ms = int((time.time() - translation_start) * 1000)
+            print(f"✅ Translated to English in {translation_time_ms}ms: {khatiyan_data_en}")
+        except Exception as e:
+            logger.error(f"Translation failed: {e}")
+            print(f"❌ Translation failed: {e}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"Extraction successful but translation failed: {str(e)}"
+            )
 
         # Now check if we have this record in database
-        if supabase_client and khatiyan_data:
+        if supabase_client and khatiyan_data_en:
             try:
-                district = khatiyan_data.get("district", "")
-                tehsil = khatiyan_data.get("tehsil", "")
-                village = khatiyan_data.get("village", "")
-                khatiyan_number = khatiyan_data.get("khatiyan_number", "")
+                district = khatiyan_data_en.get("district", "")
+                tehsil = khatiyan_data_en.get("tehsil", "")
+                village = khatiyan_data_en.get("village", "")
+                khatiyan_number = khatiyan_data_en.get("khatiyan_number", "")
 
                 if district and tehsil and village and khatiyan_number:
                     # Look for existing record by unique key
@@ -988,9 +1078,9 @@ async def explain_content(webpage: WebpageContent, request: Request):
                         twenty_four_hours_ago = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
 
                         extraction_result = supabase_client.table("khatiyan_extractions")\
-                            .select("extraction_data, created_at")\
+                            .select("extraction_data_en, extraction_data_od, created_at")\
                             .eq("khatiyan_record_id", record_id)\
-                            .eq("model_name", "claude-3-5-sonnet-20241022")\
+                            .eq("model_name", "beautifulsoup4")\
                             .eq("prompt_version", "v1")\
                             .gte("created_at", twenty_four_hours_ago)\
                             .order("created_at", desc=True)\
@@ -998,19 +1088,25 @@ async def explain_content(webpage: WebpageContent, request: Request):
                             .execute()
 
                         if extraction_result.data and len(extraction_result.data) > 0:
-                            cached_extraction = extraction_result.data[0]["extraction_data"]
+                            cached_extraction = extraction_result.data[0]
                             print(f"✅ Using cached extraction from database (created: {extraction_result.data[0]['created_at']})")
-                            khatiyan_data = cached_extraction
+                            khatiyan_data_en = cached_extraction["extraction_data_en"]
+                            khatiyan_data_od = cached_extraction["extraction_data_od"]
                             extraction_time_ms = 0  # Cache hit - overwrite with 0
             except Exception as e:
                 print(f"⚠️  Error checking cache: {e}")
 
         # Create/get record if we don't have it yet and have valid data
-        if not record_id and khatiyan_data and supabase_client:
-            district = khatiyan_data.get("district", "")
-            tehsil = khatiyan_data.get("tehsil", "")
-            village = khatiyan_data.get("village", "")
-            khatiyan_number = khatiyan_data.get("khatiyan_number", "")
+        if not record_id and khatiyan_data_en and supabase_client:
+            district = khatiyan_data_en.get("district", "")
+            tehsil = khatiyan_data_en.get("tehsil", "")
+            village = khatiyan_data_en.get("village", "")
+            khatiyan_number = khatiyan_data_en.get("khatiyan_number", "")
+
+            # Get native names from Odia JSON
+            native_district = khatiyan_data_od.get("ଜିଲ୍ଲା")
+            native_tehsil = khatiyan_data_od.get("ତହସିଲ")
+            native_village = khatiyan_data_od.get("ଗ୍ରାମ")
 
             if district and tehsil and village and khatiyan_number:
                 record_id = await get_or_create_khatiyan_record(
@@ -1021,29 +1117,26 @@ async def explain_content(webpage: WebpageContent, request: Request):
                     title=webpage.title,
                     raw_content=text_content,
                     raw_html=html_content,
-                    native_district=khatiyan_data.get("native_district"),
-                    native_tehsil=khatiyan_data.get("native_tehsil"),
-                    native_village=khatiyan_data.get("native_village")
+                    native_district=native_district,
+                    native_tehsil=native_tehsil,
+                    native_village=native_village
                 )
 
         # Store extraction to Supabase (if not cached and record exists)
         if record_id and not cached_extraction:
-            # Set model provider and name based on extraction method
-            if extraction_method == "html_parser":
-                model_provider = "html_parser"
-                model_name = "beautifulsoup4"
-            else:
-                model_provider = "anthropic"
-                model_name = "claude-3-5-sonnet-20241022"
+            # Always use HTML parser (no LLM fallback)
+            model_provider = "html_parser"
+            model_name = "beautifulsoup4"
 
             await store_khatiyan_extraction(
                 khatiyan_record_id=record_id,
-                extraction_data=khatiyan_data,
+                extraction_data_en=khatiyan_data_en,
+                extraction_data_od=khatiyan_data_od,
                 model_provider=model_provider,
                 model_name=model_name,
-                prompt_version="v1",  # Increment this when you optimize DSPy prompts
+                prompt_version="v1",
                 extraction_time_ms=extraction_time_ms,
-                prompt_config=prompt_config,  # Store the actual DSPy prompt (None for HTML parser)
+                prompt_config=prompt_config,  # None for HTML parser
                 extraction_method=extraction_method,
                 parser_confidence=parser_confidence
             )
@@ -1055,7 +1148,9 @@ async def explain_content(webpage: WebpageContent, request: Request):
 
         return {
             "explanation": explanation,
-            "khatiyan_data": khatiyan_data,
+            "khatiyan_data": khatiyan_data_en,  # Return English data for backward compatibility
+            "khatiyan_data_en": khatiyan_data_en,  # Explicit English data
+            "khatiyan_data_od": khatiyan_data_od,  # Explicit Odia data
             "url": webpage.url,
             "title": webpage.title,
             "record_id": record_id,

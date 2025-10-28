@@ -21,6 +21,32 @@ from typing import Dict, Tuple, List, Optional
 
 logger = logging.getLogger(__name__)
 
+# Mapping from English field names to Odia field names
+ENGLISH_TO_ODIA_FIELD_NAMES = {
+    # Location fields
+    "district": "ଜିଲ୍ଲା",
+    "tehsil": "ତହସିଲ",
+    "village": "ଗ୍ରାମ",
+    "khatiyan_number": "ଖତିୟାନ_ନମ୍ବର",
+
+    # Owner information
+    "owner_name": "ମାଲିକ_ନାମ",
+    "father_name": "ପିତା_ନାମ",
+    "caste": "ଜାତି",
+    "other_owners": "ଅନ୍ୟ_ମାଲିକ",
+
+    # Plot information
+    "total_plots": "ମୋଟ_ପ୍ଲଟ",
+    "plot_numbers": "ପ୍ଲଟ_ନମ୍ବର",
+    "total_area": "ମୋଟ_କ୍ଷେତ୍ରଫଳ",
+    "land_type": "ଜମି_ପ୍ରକାର",
+    "plot_notes": "ପ୍ଲଟ_ଟିପ୍ପଣୀ",
+    "plots": "ପ୍ଲଟ_ବିବରଣୀ",  # Detailed plot information array
+
+    # Metadata
+    "special_comments": "ବିଶେଷ_ମନ୍ତବ୍ୟ",
+}
+
 
 class BhulekhaHTMLParser:
     """Parser for Bhulekha RoR HTML documents"""
@@ -55,12 +81,81 @@ class BhulekhaHTMLParser:
             except Exception as e:
                 logger.warning(f"Could not save debug HTML: {e}")
 
-    def extract_khatiyan_details(self) -> Tuple[Dict, str]:
+    def _create_odia_json(self, english_data: Dict) -> Dict:
         """
-        Extract all Khatiyan details from HTML
+        Create Odia JSON with Odia keys and Odia values from English data
+
+        Args:
+            english_data: Dictionary with English keys and mixed values
+                         (may contain native_* fields for bilingual data)
 
         Returns:
-            Tuple of (extraction_data dict, confidence_level string)
+            Dictionary with Odia keys and Odia values (or English if Odia unavailable)
+        """
+        odia_data = {}
+
+        for eng_key, eng_value in english_data.items():
+            # Get Odia key from mapping
+            odia_key = ENGLISH_TO_ODIA_FIELD_NAMES.get(eng_key)
+
+            # Skip keys without Odia mapping (like 'native_*' fields)
+            if not odia_key:
+                continue
+
+            # For location fields, prefer native_* field if available, otherwise use main field
+            # (This handles both bilingual ViewRoR and Odia-only SRoRFront formats)
+            if eng_key == "district":
+                odia_value = english_data.get("native_district") or eng_value
+            elif eng_key == "tehsil":
+                odia_value = english_data.get("native_tehsil") or eng_value
+            elif eng_key == "village":
+                odia_value = english_data.get("native_village") or eng_value
+            elif eng_key == "plots":
+                # Convert plot objects to have Odia keys
+                odia_value = self._convert_plots_to_odia(eng_value)
+            else:
+                # For other fields, copy value as-is (English fallback if no Odia available)
+                # (HTML doesn't have Odia versions for owner names, plot numbers, etc.)
+                odia_value = eng_value
+
+            odia_data[odia_key] = odia_value
+
+        return odia_data
+
+    def _convert_plots_to_odia(self, plots: List[Dict]) -> List[Dict]:
+        """
+        Convert plot objects from English keys to Odia keys
+
+        Args:
+            plots: List of plot dictionaries with English keys
+
+        Returns:
+            List of plot dictionaries with Odia keys
+        """
+        plot_key_mapping = {
+            "plot_number": "ପ୍ଲଟ_ନମ୍ବର",
+            "area": "କ୍ଷେତ୍ରଫଳ",  # Area in hectares
+            "land_type": "ଜମି_ପ୍ରକାର",
+            "notes": "ଟିପ୍ପଣୀ"  # Remarks/Notes
+        }
+
+        odia_plots = []
+        for plot in plots:
+            odia_plot = {}
+            for eng_key, value in plot.items():
+                odia_key = plot_key_mapping.get(eng_key, eng_key)  # Use English key if no mapping
+                odia_plot[odia_key] = value
+            odia_plots.append(odia_plot)
+
+        return odia_plots
+
+    def extract_khatiyan_details(self) -> Tuple[Dict, str]:
+        """
+        Extract all Khatiyan details from HTML in Odia
+
+        Returns:
+            Tuple of (odia_data dict, confidence_level string)
+            odia_data: Dictionary with Odia keys and Odia values
             confidence_level: "high", "medium", or "low"
         """
         try:
@@ -69,48 +164,54 @@ class BhulekhaHTMLParser:
             plot_data = self._extract_plot_data()
             special_comments = self._extract_special_comments()
 
-            # Merge all extracted data
-            extraction_data = {
+            # Merge all extracted data (contains both English keys and native_* fields)
+            extracted_data = {
                 **location_data,
                 **plot_data,
                 "special_comments": special_comments
             }
 
-            # Calculate confidence based on completeness
-            confidence = self._calculate_confidence(extraction_data)
+            # Create Odia JSON with Odia keys and values
+            odia_data = self._create_odia_json(extracted_data)
+
+            # Calculate confidence based on completeness (use extracted_data for calculation)
+            confidence = self._calculate_confidence({k: v for k, v in extracted_data.items()
+                                                    if not k.startswith('native_')})
 
             # Only print debug info if in debug mode
             debug_mode = os.environ.get('BHULEKHA_DEBUG', '').lower() == 'true'
             if not debug_mode:
                 # Clean output for production
-                print(f"✅ Parser extracted data with {confidence} confidence")
+                print(f"✅ Parser extracted Odia data with {confidence} confidence")
             else:
                 # Verbose output for debugging
                 print(f"location_data : {location_data}")
                 print(f"plot_data : {plot_data}")
                 print(f"special_comments : {special_comments}")
+                print(f"odia_data : {odia_data}")
 
-            logger.info(f"HTML parser extracted data with {confidence} confidence")
-            return extraction_data, confidence
+            logger.info(f"HTML parser extracted Odia data with {confidence} confidence")
+            return odia_data, confidence
 
         except Exception as e:
             logger.error(f"Error in HTML parsing: {e}", exc_info=True)
-            # Return minimal data with low confidence on error
-            return {
-                "district": "Extraction failed",
-                "tehsil": "Extraction failed",
-                "village": "Extraction failed",
-                "khatiyan_number": "Extraction failed",
-                "owner_name": "Extraction failed",
-                "father_name": "Extraction failed",
-                "caste": "Extraction failed",
-                "total_plots": "Extraction failed",
-                "plot_numbers": "Extraction failed",
-                "total_area": "Extraction failed",
-                "land_type": "Extraction failed",
-                "special_comments": "Extraction failed",
-                "other_owners": "Extraction failed"
-            }, "low"
+            # Return minimal Odia data with low confidence on error
+            odia_error_data = {
+                "ଜିଲ୍ଲା": "Extraction failed",
+                "ତହସିଲ": "Extraction failed",
+                "ଗ୍ରାମ": "Extraction failed",
+                "ଖତିୟାନ_ନମ୍ବର": "Extraction failed",
+                "ମାଲିକ_ନାମ": "Extraction failed",
+                "ପିତା_ନାମ": "Extraction failed",
+                "ଜାତି": "Extraction failed",
+                "ମୋଟ_ପ୍ଲଟ": "Extraction failed",
+                "ପ୍ଲଟ_ନମ୍ବର": "Extraction failed",
+                "ମୋଟ_କ୍ଷେତ୍ରଫଳ": "Extraction failed",
+                "ଜମି_ପ୍ରକାର": "Extraction failed",
+                "ବିଶେଷ_ମନ୍ତବ୍ୟ": "Extraction failed",
+                "ଅନ୍ୟ_ମାଲିକ": "Extraction failed"
+            }
+            return odia_error_data, "low"
 
     def _extract_srorfront_field(self, label_odia: str, span_ids: List[str]) -> Tuple[Optional[str], Optional[str]]:
         """
@@ -420,8 +521,8 @@ class BhulekhaHTMLParser:
                     logger.warning(f"Error parsing plot row: {e}")
                     continue
 
-            # Aggregate data
-            plot_numbers = ", ".join([p["plot_number"] for p in plots])
+            # Aggregate data - return as array for consistency
+            plot_numbers = [p["plot_number"] for p in plots]
 
             # Handle multiple owners
             owners_list = sorted(list(owners))
@@ -478,27 +579,50 @@ class BhulekhaHTMLParser:
                 first_cell_text = cells[0].get_text(strip=True)
 
                 # Skip header rows and summary rows
-                if not first_cell_text or first_cell_text.startswith('ପ୍ଲଟ') or 'plot' in first_cell_text.lower():
+                # Headers may contain: ପ୍ଲଟ (plot), ଚକର (circle), plot, etc.
+                if (not first_cell_text or
+                    first_cell_text.startswith('ପ୍ଲଟ') or
+                    first_cell_text.startswith('ଚକର') or
+                    'plot' in first_cell_text.lower() or
+                    'ମନ୍ତବ୍ୟ' in first_cell_text):  # ମନ୍ତବ୍ୟ = Remarks (header)
                     continue
 
                 try:
-                    # Extract plot number (first cell may contain link)
-                    plot_link = cells[0].find('a')
-                    plot_number = plot_link.get_text(strip=True) if plot_link else cells[0].get_text(strip=True)
+                    # Extract plot number
+                    # Try span with lblPlotNo ID first (CRoRFront format)
+                    plot_span = row.find('span', id=re.compile(r'.*lblPlotNo.*'))
+                    if plot_span:
+                        plot_number = plot_span.get_text(strip=True)
+                    else:
+                        # Fallback: first cell may contain link or text
+                        plot_link = cells[0].find('a')
+                        plot_number = plot_link.get_text(strip=True) if plot_link else cells[0].get_text(strip=True)
 
                     # Skip if plot_number is empty or just whitespace
                     if not plot_number or plot_number == '&nbsp;':
                         continue
 
-                    # Land type (column 2, index 1)
-                    land_type = cells[1].get_text(strip=True) if len(cells) > 1 else ""
+                    # Land type - try lblPlotci (CRoRFront) or lbllType (SRoRFront) spans first
+                    land_type_span = row.find('span', id=re.compile(r'.*lblPlotci.*'))
+                    if land_type_span:
+                        land_type = land_type_span.get_text(strip=True)
+                    else:
+                        land_type_span = row.find('span', id=re.compile(r'.*lbllType.*'))
+                        land_type = land_type_span.get_text(strip=True) if land_type_span else (cells[1].get_text(strip=True) if len(cells) > 1 else "")
 
-                    # Area - The columns are: Plot#, Land Type, Details, Acre, Decimal, Hectare, Remarks
-                    # Try hectare column first (index 5), then calculate from Acre+Decimal if needed
+                    # Area - Try span with lblHector ID first (most reliable for CRoRFront)
                     area = 0.0
+                    hectare_span = row.find('span', id=re.compile(r'.*lblHector.*'))
+                    if hectare_span:
+                        hectare_str = hectare_span.get_text(strip=True)
+                        if hectare_str:
+                            try:
+                                area = float(hectare_str)
+                            except ValueError:
+                                pass
 
-                    # Method 1: Try hectare column (index 5)
-                    if len(cells) > 5:
+                    # Fallback: If no hectare span or value is 0, try cells by index
+                    if area == 0.0 and len(cells) > 5:
                         hectare_str = cells[5].get_text(strip=True)
                         if hectare_str:
                             try:
@@ -506,12 +630,15 @@ class BhulekhaHTMLParser:
                             except ValueError:
                                 pass
 
-                    # Method 2: If hectare is empty, calculate from Acre (index 3) and Decimal (index 4)
-                    if area == 0.0 and len(cells) > 4:
-                        try:
-                            acre_str = cells[3].get_text(strip=True)
-                            decimal_str = cells[4].get_text(strip=True)
+                    # Last resort: Calculate from Acre and Decimal spans/cells
+                    if area == 0.0:
+                        acre_span = row.find('span', id=re.compile(r'.*lblAcre.*'))
+                        decimal_span = row.find('span', id=re.compile(r'.*lblDecimil.*'))
 
+                        acre_str = acre_span.get_text(strip=True) if acre_span else (cells[3].get_text(strip=True) if len(cells) > 3 else "")
+                        decimal_str = decimal_span.get_text(strip=True) if decimal_span else (cells[4].get_text(strip=True) if len(cells) > 4 else "")
+
+                        try:
                             acre = float(acre_str) if acre_str else 0.0
                             decimal = float(decimal_str) if decimal_str else 0.0
 
@@ -522,9 +649,15 @@ class BhulekhaHTMLParser:
 
                     total_area += area
 
-                    # Extract plot remarks/notes (last column, index 6)
+                    # Extract plot remarks/notes - try span first
                     plot_notes = ""
-                    if len(cells) > 6:
+                    remarks_span = row.find('span', id=re.compile(r'.*lblPlotRemarks.*'))
+                    if remarks_span:
+                        notes_text = remarks_span.get_text(strip=True)
+                        if notes_text and notes_text != '&nbsp;':
+                            plot_notes = notes_text
+                    elif len(cells) > 6:
+                        # Fallback to cell index
                         notes_text = cells[6].get_text(strip=True)
                         if notes_text and notes_text != '&nbsp;':
                             plot_notes = notes_text
@@ -571,13 +704,13 @@ class BhulekhaHTMLParser:
                         caste_part = owner_text.split('ଜା:')[1].split('ବା:')[0].strip()
                         caste = caste_part
 
-            # Aggregate plot data
-            plot_numbers = ", ".join([p["plot_number"] for p in plots])
+            # Aggregate plot data - return as array for consistency
+            plot_numbers = [p["plot_number"] for p in plots]
             land_type_str = " / ".join(sorted(list(plot_types))) if plot_types else "Not found"
 
             return {
                 "total_plots": str(len(plots)) if plots else "Not found",
-                "plot_numbers": plot_numbers if plot_numbers else "Not found",
+                "plot_numbers": plot_numbers if plot_numbers else [],
                 "total_area": f"{total_area:.4f} hectares" if total_area > 0 else "Not found",
                 "owner_name": owner_name,
                 "father_name": father_name,
@@ -595,7 +728,7 @@ class BhulekhaHTMLParser:
         """Return empty plot data structure"""
         return {
             "total_plots": "Not found",
-            "plot_numbers": "Not found",
+            "plot_numbers": [],  # Empty array for consistency
             "total_area": "Not found",
             "owner_name": "Not found",
             "father_name": "Not found",
@@ -608,30 +741,58 @@ class BhulekhaHTMLParser:
     def _extract_special_comments(self) -> str:
         """
         Extract metadata and special comments (dates, police station, revenue)
+        Returns Odia text only (no English labels)
 
         Returns:
-            Formatted string with all special comments/metadata
+            Formatted string with all special comments/metadata in Odia
         """
         try:
             comments = []
 
+            # 1. Extract special case/comments text (ବିଶେଷ ଅନୁସଙ୍ଗ)
+            # SRoRFront format: <span id="gvfront_ctl02_lblSpecialCase">...</span>
+            special_case_span = self.soup.find('span', id=re.compile(r'.*lblSpecialCase.*'))
+            if special_case_span:
+                special_text = special_case_span.get_text(strip=True)
+                if special_text:
+                    # Just add the Odia text without English label
+                    comments.append(special_text)
+
+            # 2. Extract dates and metadata from span tags (SRoRFront format)
+            # Look for common span IDs with Odia labels
+            span_metadata_fields = {
+                "lblLastPublishDate": "ଅନ୍ତିମ ପ୍ରକାଶନ ତାରିଖ",
+                "lblTaxDate": "ଖଜଣା ଧାର୍ଯ୍ୟ ତାରିଖ",
+            }
+
+            for span_id_pattern, odia_label in span_metadata_fields.items():
+                span = self.soup.find('span', id=re.compile(f'.*{span_id_pattern}.*'))
+                if span:
+                    value = span.get_text(strip=True)
+                    if value:
+                        comments.append(f"{odia_label}: {value}")
+
+            # 3. Extract metadata from strong tags (ViewRoR format)
             # Find the metadata section (after plot table, before buttons)
-            # Look for the table containing special fields
             strong_tags = self.soup.find_all('strong')
 
             metadata_fields = {
-                "Final Publication Date": ("ଅନ୍ତିମ ପ୍ରକାଶନ ତାରିଖ", "Final Publication Date"),
-                "Rent Fixation Date": ("ଭଡା ନିର୍ଦ୍ଧାରଣ ତାରିଖ", "Rent Fixation Date"),
-                "Police Station": ("ଥାନା", "Police Station"),
-                "P.S. No.": ("ଥାନା ନଂ", "P.S. No"),
-                "Tahasil No.": ("ତହସିଲ ନଂ", "Tahasil No"),
-                "Land Revenue": ("ଜମି ରାଜସ୍ୱ", "Land Revenue")
+                "ଅନ୍ତିମ ପ୍ରକାଶନ ତାରିଖ": "ଅନ୍ତିମ ପ୍ରକାଶନ ତାରିଖ",
+                "ଭଡା ନିର୍ଦ୍ଧାରଣ ତାରିଖ": "ଭଡା ନିର୍ଦ୍ଧାରଣ ତାରିଖ",
+                "ଥାନା": "ଥାନା",
+                "ଥାନା ନଂ": "ଥାନା ନଂ",
+                "ତହସିଲ ନଂ": "ତହସିଲ ନଂ",
+                "ଜମି ରାଜସ୍ୱ": "ଜମି ରାଜସ୍ୱ"
             }
 
-            for field_key, (odia_label, english_label) in metadata_fields.items():
+            for odia_label, display_label in metadata_fields.items():
+                # Skip if already found in span tags
+                if any(odia_label in comment for comment in comments):
+                    continue
+
                 for strong in strong_tags:
                     text = strong.get_text(strip=True)
-                    if odia_label in text or english_label in text:
+                    if odia_label in text:
                         # Get the text after the strong tag (usually after ":")
                         parent = strong.find_parent()
                         if parent:
@@ -640,7 +801,7 @@ class BhulekhaHTMLParser:
                             match = re.search(r':\s*(.+?)(?:\n|$|<)', full_text)
                             if match:
                                 value = match.group(1).strip()
-                                comments.append(f"{english_label}: {value}")
+                                comments.append(f"{display_label}: {value}")
                                 break
 
             # Note: Plot-specific notes are stored in the plots array, not in special_comments
@@ -700,7 +861,8 @@ def parse_bhulekha_html(html_content: str) -> Tuple[Dict, str]:
         html_content: Raw HTML string
 
     Returns:
-        Tuple of (extraction_data dict, confidence_level string)
+        Tuple of (odia_data dict, confidence_level string)
+        odia_data: Dictionary with Odia keys and Odia values
     """
     parser = BhulekhaHTMLParser(html_content)
     return parser.extract_khatiyan_details()

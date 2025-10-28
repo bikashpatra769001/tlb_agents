@@ -208,7 +208,8 @@ CREATE TABLE khatiyan_extractions (
   -- Extracted data stored as JSON (extensible schema)
   -- This allows adding new fields without schema migrations
   -- Example structure: {"district": "...", "tehsil": "...", "owner_name": "...", ...}
-  extraction_data JSONB NOT NULL,
+  extraction_data_en JSONB NOT NULL,  -- English JSON (English keys + English values)
+  extraction_data_od JSONB,           -- Odia JSON (Odia keys + Odia values)
 
   -- Quality and validation
   extraction_status TEXT CHECK (extraction_status IN ('pending', 'correct', 'wrong', 'needs_review')),
@@ -244,12 +245,13 @@ CREATE INDEX idx_extractions_method ON khatiyan_extractions(extraction_method); 
 CREATE INDEX idx_extractions_comparison ON khatiyan_extractions(khatiyan_record_id, model_name, extraction_status);
 
 -- JSONB indexes for querying extracted data fields
--- GIN index for general JSONB queries
-CREATE INDEX idx_extractions_data_gin ON khatiyan_extractions USING GIN (extraction_data);
+-- GIN indexes for general JSONB queries (both English and Odia)
+CREATE INDEX idx_extractions_data_en_gin ON khatiyan_extractions USING GIN (extraction_data_en);
+CREATE INDEX idx_extractions_data_od_gin ON khatiyan_extractions USING GIN (extraction_data_od);
 
--- Specific B-tree indexes for commonly queried fields (optional, for better performance on exact matches)
-CREATE INDEX idx_extractions_district ON khatiyan_extractions ((extraction_data->>'district'));
-CREATE INDEX idx_extractions_khatiyan_number ON khatiyan_extractions ((extraction_data->>'khatiyan_number'));
+-- Specific B-tree indexes for commonly queried fields in English JSON (optional, for better performance on exact matches)
+CREATE INDEX idx_extractions_district ON khatiyan_extractions ((extraction_data_en->>'district'));
+CREATE INDEX idx_extractions_khatiyan_number ON khatiyan_extractions ((extraction_data_en->>'khatiyan_number'));
 
 -- ============================================================================
 -- Table: khatiyan_summaries
@@ -384,18 +386,19 @@ SELECT
   ke.model_name,
   ke.prompt_version,
 
-  -- Extract commonly queried fields from JSON
-  ke.extraction_data->>'district' as extracted_district,
-  ke.extraction_data->>'tehsil' as extracted_tehsil,
-  ke.extraction_data->>'village' as extracted_village,
-  ke.extraction_data->>'khatiyan_number' as extracted_khatiyan_number,
-  ke.extraction_data->>'owner_name' as owner_name,
-  ke.extraction_data->>'father_name' as father_name,
-  ke.extraction_data->>'total_plots' as total_plots,
-  ke.extraction_data->>'total_area' as total_area,
+  -- Extract commonly queried fields from English JSON
+  ke.extraction_data_en->>'district' as extracted_district,
+  ke.extraction_data_en->>'tehsil' as extracted_tehsil,
+  ke.extraction_data_en->>'village' as extracted_village,
+  ke.extraction_data_en->>'khatiyan_number' as extracted_khatiyan_number,
+  ke.extraction_data_en->>'owner_name' as owner_name,
+  ke.extraction_data_en->>'father_name' as father_name,
+  ke.extraction_data_en->>'total_plots' as total_plots,
+  ke.extraction_data_en->>'total_area' as total_area,
 
-  -- Keep full JSON for additional fields
-  ke.extraction_data,
+  -- Keep full JSONs for additional fields
+  ke.extraction_data_en,
+  ke.extraction_data_od,
 
   ke.extraction_status,
   ke.extraction_time_ms,
@@ -497,7 +500,8 @@ CREATE OR REPLACE VIEW khatiyan_extraction_eval_dataset AS
             r.raw_content as khatiyan_raw_text,
             e.prompt_config,
             e.model_name,
-            e.extraction_data,
+            e.extraction_data_en,
+            e.extraction_data_od,
             e.created_at,
             e.updated_at
         FROM khatiyan_extractions e
@@ -1025,6 +1029,22 @@ ALTER TABLE khatiyan_extractions ADD CONSTRAINT check_parser_confidence
 
 -- Add index for extraction_method
 CREATE INDEX IF NOT EXISTS idx_extractions_method ON khatiyan_extractions(extraction_method);
+
+-- ============================================================================
+-- Migration: Add Dual-Language Storage (for existing databases)
+-- ============================================================================
+-- Run these statements to add Odia JSON storage to existing databases:
+
+-- Rename existing extraction_data to extraction_data_en
+ALTER TABLE khatiyan_extractions RENAME COLUMN extraction_data TO extraction_data_en;
+
+-- Add new Odia extraction column
+ALTER TABLE khatiyan_extractions ADD COLUMN IF NOT EXISTS extraction_data_od JSONB;
+
+-- Update indexes (drop old, create new)
+DROP INDEX IF EXISTS idx_extractions_data_gin;
+CREATE INDEX IF NOT EXISTS idx_extractions_data_en_gin ON khatiyan_extractions USING GIN (extraction_data_en);
+CREATE INDEX IF NOT EXISTS idx_extractions_data_od_gin ON khatiyan_extractions USING GIN (extraction_data_od);
 
 -- ============================================================================
 -- Monitoring Queries for HTML Parser Performance

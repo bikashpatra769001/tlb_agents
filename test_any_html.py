@@ -47,14 +47,18 @@ for key, value in location_data.items():
 print("\n" + "=" * 80)
 print("\n📊 FULL EXTRACTION TEST\n")
 
-extraction_data, confidence = parser.extract_khatiyan_details()
+data_od, confidence = parser.extract_khatiyan_details()
 
 print(f"\n🎯 Confidence: {confidence}")
-print("\nAll Extracted Fields:")
+
+print("\n📄 ODIA JSON (Odia keys + Odia values):")
 print("-" * 80)
-for key, value in extraction_data.items():
+for key, value in data_od.items():
     if key != 'plots':  # Skip detailed plots list
         status = "✅" if value and value not in ["Not found", "Extraction failed"] else "❌"
         print(f"  {status} {key:20s}: {str(value)[:60]}")
 
 print("\n" + "=" * 80)
+print("\nℹ️  Note: English translation is done via LLM in the API endpoint, not in the parser.")
+print("   To test translation, use the /explain API endpoint.")
+print("=" * 80)
