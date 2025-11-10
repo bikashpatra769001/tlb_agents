@@ -80,18 +80,9 @@ interface SummaryResponse {
   cached: boolean;        // Show cache indicator
 }
 
-interface BhulekhaPageData {
-  stateId: number;
-  districtId: number | null;
-  tahasilId: number | null;
-  villageId: number | null;
-  khataNumber: string | null;
-}
-
 // Constants
 // const API_BASE_URL = 'https://wyt8w11xp0.execute-api.ap-south-1.amazonaws.com';
 const API_BASE_URL = 'http://0.0.0.0:8000'
-const NEW_SUMMARIZE_API = 'https://5rp9zvhds7.ap-south-1.awsapprunner.com/api/v2/od/summarize_ror_ui'
 const ALLOWED_URLS = [
   'https://bhulekh.ori.nic.in/SRoRFront_Uni.aspx',
   'https://bhulekh.ori.nic.in/CRoRFront_Uni.aspx'
@@ -405,46 +396,32 @@ async function handleActionButtonClick(actionId: string): Promise<void> {
   try {
     // Use new API endpoint for summarize button, /chat for others
     if (action.id === 'summarize') {
-      // Extract Bhulekha page data (IDs and khata number)
-      const pageDataResults = await chrome.scripting.executeScript({
+      // Read current page content for summarization
+      const results = await chrome.scripting.executeScript({
         target: { tabId: currentTab.id! },
-        func: extractBhulekhaPageData
+        func: getPageContent
       });
 
-      const pageData = pageDataResults[0].result as BhulekhaPageData;
+      const currentPageContent = results[0].result as PageContent;
 
-      // Validate that we have the required data
-      if (!pageData.districtId || !pageData.tahasilId || !pageData.villageId || !pageData.khataNumber) {
-        addSystemMessage('⚠️ Could not extract all required information from the page.');
-        addSystemMessage(`Extracted: District ID: ${pageData.districtId || 'Missing'}, Tahasil ID: ${pageData.tahasilId || 'Missing'}, Village ID: ${pageData.villageId || 'Missing'}, Khata: ${pageData.khataNumber || 'Missing'}`);
-        throw new Error('Missing required page data');
-      }
-
-      // Call the new summarization API
-      const response = await fetch(NEW_SUMMARIZE_API, {
+      // Call the new summarization API for Chrome extension
+      const response = await fetch(`${API_BASE_URL}/api/v2/od/summarize_ror_ext`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Accept': '*/*',
+          'X-Tester-ID': testerId || 'anonymous',
         },
         body: JSON.stringify({
-          stateId: pageData.stateId,
-          districtId: pageData.districtId,
-          tahasilId: pageData.tahasilId,
-          villageId: pageData.villageId,
-          khataNumber: pageData.khataNumber,
-          translationModel: 'claude-haiku-4-5',
-          summarizationModel: 'claude-haiku-4-5',
-          useCustomGlossary: false,
-          validateSchema: false
+          html_content: currentPageContent.html,
+          translation_model: 'claude-sonnet-4-5',
+          summarization_model: 'claude-haiku-4-5'
         })
       });
 
       if (response.ok) {
         const result = await response.json();
 
-        // Display the summary (adapt based on the actual response structure)
-        // The new API might return data in a different format
+        // Display the summary
         if (result.html_summary || result.summary) {
           const summaryHTML = result.html_summary || result.summary || JSON.stringify(result);
           const container = document.createElement('div');
@@ -506,120 +483,6 @@ function getPageContent(): PageContent {
     text: document.body.innerText || document.body.textContent || '',
     html: document.documentElement.outerHTML
   };
-}
-
-// Function to extract Bhulekha page data (IDs and khata number)
-function extractBhulekhaPageData(): BhulekhaPageData {
-  const result: BhulekhaPageData = {
-    stateId: 1, // Fixed for Odisha
-    districtId: null,
-    tahasilId: null,
-    villageId: null,
-    khataNumber: null
-  };
-
-  try {
-    // Method 1: Extract from URL parameters
-    const urlParams = new URLSearchParams(window.location.search);
-
-    // Try common parameter names
-    const districtParam = urlParams.get('districtId') || urlParams.get('DistrictId') || urlParams.get('district');
-    const tahasilParam = urlParams.get('tahasilId') || urlParams.get('TahasilId') || urlParams.get('tehsilId') || urlParams.get('tahasil');
-    const villageParam = urlParams.get('villageId') || urlParams.get('VillageId') || urlParams.get('moujaId') || urlParams.get('village');
-    const khataParam = urlParams.get('khataNumber') || urlParams.get('KhataNumber') || urlParams.get('khatiyanNo') || urlParams.get('khata');
-
-    if (districtParam) result.districtId = parseInt(districtParam);
-    if (tahasilParam) result.tahasilId = parseInt(tahasilParam);
-    if (villageParam) result.villageId = parseInt(villageParam);
-    if (khataParam) result.khataNumber = khataParam;
-
-    // Method 2: Extract from hidden form fields (ASP.NET pages often use these)
-    const hiddenFields = document.querySelectorAll('input[type="hidden"]');
-    hiddenFields.forEach((field) => {
-      const input = field as HTMLInputElement;
-      const name = input.name.toLowerCase();
-      const id = input.id.toLowerCase();
-      const value = input.value;
-
-      // Check for district
-      if ((name.includes('district') || id.includes('district')) && !result.districtId) {
-        const parsed = parseInt(value);
-        if (!isNaN(parsed)) result.districtId = parsed;
-      }
-
-      // Check for tahasil/tehsil
-      if ((name.includes('tahasil') || name.includes('tehsil') || id.includes('tahasil') || id.includes('tehsil')) && !result.tahasilId) {
-        const parsed = parseInt(value);
-        if (!isNaN(parsed)) result.tahasilId = parsed;
-      }
-
-      // Check for village/mouja
-      if ((name.includes('village') || name.includes('mouja') || id.includes('village') || id.includes('mouja')) && !result.villageId) {
-        const parsed = parseInt(value);
-        if (!isNaN(parsed)) result.villageId = parsed;
-      }
-
-      // Check for khata/khatiyan
-      if ((name.includes('khata') || name.includes('khatiyan') || id.includes('khata') || id.includes('khatiyan')) && !result.khataNumber) {
-        result.khataNumber = value;
-      }
-    });
-
-    // Method 3: Extract from dropdown/select elements (if visible on page)
-    const selectFields = document.querySelectorAll('select');
-    selectFields.forEach((select) => {
-      const name = select.name.toLowerCase();
-      const id = select.id.toLowerCase();
-      const value = select.value;
-
-      if ((name.includes('district') || id.includes('district')) && !result.districtId) {
-        const parsed = parseInt(value);
-        if (!isNaN(parsed) && parsed > 0) result.districtId = parsed;
-      }
-
-      if ((name.includes('tahasil') || name.includes('tehsil') || id.includes('tahasil') || id.includes('tehsil')) && !result.tahasilId) {
-        const parsed = parseInt(value);
-        if (!isNaN(parsed) && parsed > 0) result.tahasilId = parsed;
-      }
-
-      if ((name.includes('village') || name.includes('mouja') || id.includes('village') || id.includes('mouja')) && !result.villageId) {
-        const parsed = parseInt(value);
-        if (!isNaN(parsed) && parsed > 0) result.villageId = parsed;
-      }
-    });
-
-    // Method 4: Extract from text input fields
-    const textFields = document.querySelectorAll('input[type="text"]');
-    textFields.forEach((field) => {
-      const input = field as HTMLInputElement;
-      const name = input.name.toLowerCase();
-      const id = input.id.toLowerCase();
-      const value = input.value;
-
-      if ((name.includes('khata') || name.includes('khatiyan') || id.includes('khata') || id.includes('khatiyan')) && !result.khataNumber && value) {
-        result.khataNumber = value;
-      }
-    });
-
-    // Method 5: Extract from span elements with IDs (specific to Bhulekh structure)
-    // Based on html_parser.py patterns
-    const spans = document.querySelectorAll('span[id]');
-    spans.forEach((span) => {
-      const id = span.id.toLowerCase();
-      const text = span.textContent?.trim() || '';
-
-      // Look for khatiyan number in specific span IDs
-      if (id.includes('khatiyan') && !result.khataNumber && text) {
-        result.khataNumber = text;
-      }
-    });
-
-    console.log('Extracted Bhulekha Page Data:', result);
-  } catch (error) {
-    console.error('Error extracting Bhulekha page data:', error);
-  }
-
-  return result;
 }
 
 // Feedback handler
@@ -754,46 +617,49 @@ async function handleLoadContent(): Promise<void> {
 
     pageContent = results[0].result as PageContent;
 
-    // Load content to backend for context
-    const loadResponse = await fetch(`${API_BASE_URL}/load-content`, {
+    showLoading('Generating summary from Land experts...');
+    addSystemMessage('🤖 Generating summary from Land experts...');
+
+    // Call the new summarization API directly
+    const response = await fetch(`${API_BASE_URL}/api/v2/od/summarize_ror_ext`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'X-Tester-ID': testerId || 'anonymous',
       },
       body: JSON.stringify({
-        url: currentTab.url,
-        title: currentTab.title,
-        content: pageContent
-      } as LoadContentRequest)
+        html_content: pageContent.html,
+        translation_model: 'claude-sonnet-4-5',
+        summarization_model: 'claude-haiku-4-5'
+      })
     });
 
-    if (!loadResponse.ok) {
-      throw new Error(`Failed to load content: HTTP ${loadResponse.status}`);
-    }
+    if (response.ok) {
+      const result = await response.json();
 
-    showLoading('Curating explaination from our Land experts...');
-    addSystemMessage('🤖 Curating explanation from our Land experts...');
+      // Display the summary
+      if (result.html_summary || result.summary) {
+        const summaryHTML = result.html_summary || result.summary || JSON.stringify(result);
+        const container = document.createElement('div');
+        container.className = 'message bot-message html-summary';
 
-    const explainResponse = await fetch(`${API_BASE_URL}/explain`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Tester-ID': testerId || 'anonymous',
-      },
-      body: JSON.stringify({
-        url: currentTab.url,
-        title: currentTab.title,
-        content: pageContent
-      } as LoadContentRequest)
-    });
+        const summaryDiv = document.createElement('div');
+        summaryDiv.innerHTML = typeof summaryHTML === 'string' ? summaryHTML : JSON.stringify(summaryHTML, null, 2);
+        container.appendChild(summaryDiv);
 
-    if (explainResponse.ok) {
-      const result: ExplainResponse = await explainResponse.json();
-      addBotMessage(result.explanation);
-      addSystemMessage('✅ Use the action buttons below to interact with the content!');
+        chatMessages.appendChild(container);
+        scrollToBottom();
+
+        addSystemMessage('✅ Summary generated! Use the action buttons below for more actions.');
+      } else {
+        // If the response format is different, display as formatted JSON
+        addBotMessage('Summary generated successfully:');
+        addBotMessage(JSON.stringify(result, null, 2));
+        addSystemMessage('✅ Use the action buttons below to interact with the content!');
+      }
     } else {
-      throw new Error(`Failed to get explanation: HTTP ${explainResponse.status}`);
+      const errorText = await response.text();
+      throw new Error(`Failed to generate summary: HTTP ${response.status} - ${errorText}`);
     }
 
   } catch (error) {
