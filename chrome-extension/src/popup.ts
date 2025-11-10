@@ -377,6 +377,11 @@ function displayStructuredSummary(result: any): void {
 
   let html = '';
 
+  // Unwrap plotSummary if present
+  if (result.plotSummary) {
+    result = result.plotSummary;
+  }
+
   // Check if the API returned the new structured format
   if (result.locationDetails || result.ownershipDetailsSection || result.plotDetailsSection) {
 
