@@ -371,6 +371,114 @@ function displaySummaryWithFeedback(
   scrollToBottom();
 }
 
+function displayStructuredSummary(result: any): void {
+  const container = document.createElement('div');
+  container.className = 'message bot-message structured-summary';
+
+  let html = '';
+
+  // 1. Summary Section
+  if (result.summary || result.explanation) {
+    html += '<div class="summary-section" style="margin-bottom: 20px;">';
+    html += '<h3 style="color: #1976d2; margin-bottom: 10px;">📋 Summary</h3>';
+    html += `<p style="line-height: 1.6;">${result.summary || result.explanation}</p>`;
+    html += '</div>';
+  }
+
+  // 2. Owner Details Section
+  if (result.owner_details || result.owner) {
+    const owner = result.owner_details || result.owner || {};
+    html += '<div class="owner-section" style="margin-bottom: 20px;">';
+    html += '<h3 style="color: #1976d2; margin-bottom: 10px;">👤 Owner Details</h3>';
+    html += '<table class="extraction-table" style="width: 100%; border-collapse: collapse;">';
+
+    if (owner.owner_name || owner.name) {
+      html += `<tr><td style="padding: 8px; border-bottom: 1px solid #e0e0e0;"><strong>Owner Name:</strong></td><td style="padding: 8px; border-bottom: 1px solid #e0e0e0;">${owner.owner_name || owner.name}</td></tr>`;
+    }
+    if (owner.father_name) {
+      html += `<tr><td style="padding: 8px; border-bottom: 1px solid #e0e0e0;"><strong>Father's Name:</strong></td><td style="padding: 8px; border-bottom: 1px solid #e0e0e0;">${owner.father_name}</td></tr>`;
+    }
+    if (owner.caste && owner.caste !== 'Not found') {
+      html += `<tr><td style="padding: 8px; border-bottom: 1px solid #e0e0e0;"><strong>Caste:</strong></td><td style="padding: 8px; border-bottom: 1px solid #e0e0e0;">${owner.caste}</td></tr>`;
+    }
+    if (owner.other_owners && owner.other_owners !== 'None mentioned') {
+      html += `<tr><td style="padding: 8px; border-bottom: 1px solid #e0e0e0;"><strong>Co-owners:</strong></td><td style="padding: 8px; border-bottom: 1px solid #e0e0e0;">${owner.other_owners}</td></tr>`;
+    }
+
+    html += '</table>';
+    html += '</div>';
+  }
+
+  // 3. Plot Information Section
+  if (result.plot_information || result.plots || result.land_details) {
+    const plots = result.plot_information || result.plots || result.land_details || {};
+    html += '<div class="plot-section" style="margin-bottom: 20px;">';
+    html += '<h3 style="color: #1976d2; margin-bottom: 10px;">🗺️ Plot Information</h3>';
+    html += '<table class="extraction-table" style="width: 100%; border-collapse: collapse;">';
+
+    if (plots.total_plots || plots.plot_count) {
+      html += `<tr><td style="padding: 8px; border-bottom: 1px solid #e0e0e0;"><strong>Total Plots:</strong></td><td style="padding: 8px; border-bottom: 1px solid #e0e0e0;">${plots.total_plots || plots.plot_count}</td></tr>`;
+    }
+    if (plots.total_area || plots.area) {
+      html += `<tr><td style="padding: 8px; border-bottom: 1px solid #e0e0e0;"><strong>Total Area:</strong></td><td style="padding: 8px; border-bottom: 1px solid #e0e0e0;">${plots.total_area || plots.area}</td></tr>`;
+    }
+    if (plots.land_type || plots.type) {
+      html += `<tr><td style="padding: 8px; border-bottom: 1px solid #e0e0e0;"><strong>Land Type:</strong></td><td style="padding: 8px; border-bottom: 1px solid #e0e0e0;">${plots.land_type || plots.type}</td></tr>`;
+    }
+    if (plots.plot_numbers) {
+      html += `<tr><td style="padding: 8px; border-bottom: 1px solid #e0e0e0;"><strong>Plot Numbers:</strong></td><td style="padding: 8px; border-bottom: 1px solid #e0e0e0;">${plots.plot_numbers}</td></tr>`;
+    }
+
+    html += '</table>';
+    html += '</div>';
+  }
+
+  // 4. Location Information Section (if available)
+  if (result.location) {
+    const location = result.location;
+    html += '<div class="location-section" style="margin-bottom: 20px;">';
+    html += '<h3 style="color: #1976d2; margin-bottom: 10px;">📍 Location</h3>';
+    html += '<table class="extraction-table" style="width: 100%; border-collapse: collapse;">';
+
+    if (location.district) {
+      html += `<tr><td style="padding: 8px; border-bottom: 1px solid #e0e0e0;"><strong>District:</strong></td><td style="padding: 8px; border-bottom: 1px solid #e0e0e0;">${location.district}</td></tr>`;
+    }
+    if (location.tehsil || location.tahasil) {
+      html += `<tr><td style="padding: 8px; border-bottom: 1px solid #e0e0e0;"><strong>Tehsil:</strong></td><td style="padding: 8px; border-bottom: 1px solid #e0e0e0;">${location.tehsil || location.tahasil}</td></tr>`;
+    }
+    if (location.village) {
+      html += `<tr><td style="padding: 8px; border-bottom: 1px solid #e0e0e0;"><strong>Village:</strong></td><td style="padding: 8px; border-bottom: 1px solid #e0e0e0;">${location.village}</td></tr>`;
+    }
+    if (location.khatiyan_number || location.khata_number) {
+      html += `<tr><td style="padding: 8px; border-bottom: 1px solid #e0e0e0;"><strong>Khatiyan Number:</strong></td><td style="padding: 8px; border-bottom: 1px solid #e0e0e0;">${location.khatiyan_number || location.khata_number}</td></tr>`;
+    }
+
+    html += '</table>';
+    html += '</div>';
+  }
+
+  // 5. Next Steps Section
+  html += '<div class="next-steps-section" style="margin-bottom: 20px; background: #f5f5f5; padding: 15px; border-radius: 5px;">';
+  html += '<h3 style="color: #1976d2; margin-bottom: 10px;">🎯 Next Steps</h3>';
+  html += '<ul style="margin: 0; padding-left: 20px; line-height: 1.8;">';
+  html += '<li>Verify the ownership details with the actual land records</li>';
+  html += '<li>Check for any pending mutations or legal disputes</li>';
+  html += '<li>Visit the land physically to verify boundaries</li>';
+  html += '<li>Consult with a legal expert before any transactions</li>';
+  html += '<li>Use the action buttons below to apply for EC (Encumbrance Certificate) or CC (Caste Certificate)</li>';
+  html += '</ul>';
+  html += '</div>';
+
+  // If the response has html_summary, display it as fallback
+  if (result.html_summary && !result.summary && !result.owner_details && !result.plot_information) {
+    html = result.html_summary;
+  }
+
+  container.innerHTML = html;
+  chatMessages.appendChild(container);
+  scrollToBottom();
+}
+
 async function handleActionButtonClick(actionId: string): Promise<void> {
   const action = ACTION_BUTTONS.find(a => a.id === actionId);
   if (!action) return;
@@ -421,23 +529,8 @@ async function handleActionButtonClick(actionId: string): Promise<void> {
       if (response.ok) {
         const result = await response.json();
 
-        // Display the summary
-        if (result.html_summary || result.summary) {
-          const summaryHTML = result.html_summary || result.summary || JSON.stringify(result);
-          const container = document.createElement('div');
-          container.className = 'message bot-message html-summary';
-
-          const summaryDiv = document.createElement('div');
-          summaryDiv.innerHTML = typeof summaryHTML === 'string' ? summaryHTML : JSON.stringify(summaryHTML, null, 2);
-          container.appendChild(summaryDiv);
-
-          chatMessages.appendChild(container);
-          scrollToBottom();
-        } else {
-          // If the response format is different, display as formatted JSON
-          addBotMessage('Summary generated successfully:');
-          addBotMessage(JSON.stringify(result, null, 2));
-        }
+        // Display the summary using structured format
+        displayStructuredSummary(result);
       } else {
         const errorText = await response.text();
         throw new Error(`HTTP ${response.status}: ${errorText}`);
@@ -637,26 +730,9 @@ async function handleLoadContent(): Promise<void> {
     if (response.ok) {
       const result = await response.json();
 
-      // Display the summary
-      if (result.html_summary || result.summary) {
-        const summaryHTML = result.html_summary || result.summary || JSON.stringify(result);
-        const container = document.createElement('div');
-        container.className = 'message bot-message html-summary';
-
-        const summaryDiv = document.createElement('div');
-        summaryDiv.innerHTML = typeof summaryHTML === 'string' ? summaryHTML : JSON.stringify(summaryHTML, null, 2);
-        container.appendChild(summaryDiv);
-
-        chatMessages.appendChild(container);
-        scrollToBottom();
-
-        addSystemMessage('✅ Summary generated! Use the action buttons below for more actions.');
-      } else {
-        // If the response format is different, display as formatted JSON
-        addBotMessage('Summary generated successfully:');
-        addBotMessage(JSON.stringify(result, null, 2));
-        addSystemMessage('✅ Use the action buttons below to interact with the content!');
-      }
+      // Display the summary using structured format
+      displayStructuredSummary(result);
+      addSystemMessage('✅ Summary generated! Use the action buttons below for more actions.');
     } else {
       const errorText = await response.text();
       throw new Error(`Failed to generate summary: HTTP ${response.status} - ${errorText}`);
