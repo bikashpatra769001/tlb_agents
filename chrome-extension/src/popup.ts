@@ -617,46 +617,49 @@ async function handleLoadContent(): Promise<void> {
 
     pageContent = results[0].result as PageContent;
 
-    // Load content to backend for context
-    const loadResponse = await fetch(`${API_BASE_URL}/load-content`, {
+    showLoading('Generating summary from Land experts...');
+    addSystemMessage('🤖 Generating summary from Land experts...');
+
+    // Call the new summarization API directly
+    const response = await fetch(`${API_BASE_URL}/api/v2/od/summarize_ror_ext`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'X-Tester-ID': testerId || 'anonymous',
       },
       body: JSON.stringify({
-        url: currentTab.url,
-        title: currentTab.title,
-        content: pageContent
-      } as LoadContentRequest)
+        html_content: pageContent.html,
+        translation_model: 'claude-sonnet-4-5',
+        summarization_model: 'claude-haiku-4-5'
+      })
     });
 
-    if (!loadResponse.ok) {
-      throw new Error(`Failed to load content: HTTP ${loadResponse.status}`);
-    }
+    if (response.ok) {
+      const result = await response.json();
 
-    showLoading('Curating explaination from our Land experts...');
-    addSystemMessage('🤖 Curating explanation from our Land experts...');
+      // Display the summary
+      if (result.html_summary || result.summary) {
+        const summaryHTML = result.html_summary || result.summary || JSON.stringify(result);
+        const container = document.createElement('div');
+        container.className = 'message bot-message html-summary';
 
-    const explainResponse = await fetch(`${API_BASE_URL}/explain`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Tester-ID': testerId || 'anonymous',
-      },
-      body: JSON.stringify({
-        url: currentTab.url,
-        title: currentTab.title,
-        content: pageContent
-      } as LoadContentRequest)
-    });
+        const summaryDiv = document.createElement('div');
+        summaryDiv.innerHTML = typeof summaryHTML === 'string' ? summaryHTML : JSON.stringify(summaryHTML, null, 2);
+        container.appendChild(summaryDiv);
 
-    if (explainResponse.ok) {
-      const result: ExplainResponse = await explainResponse.json();
-      addBotMessage(result.explanation);
-      addSystemMessage('✅ Use the action buttons below to interact with the content!');
+        chatMessages.appendChild(container);
+        scrollToBottom();
+
+        addSystemMessage('✅ Summary generated! Use the action buttons below for more actions.');
+      } else {
+        // If the response format is different, display as formatted JSON
+        addBotMessage('Summary generated successfully:');
+        addBotMessage(JSON.stringify(result, null, 2));
+        addSystemMessage('✅ Use the action buttons below to interact with the content!');
+      }
     } else {
-      throw new Error(`Failed to get explanation: HTTP ${explainResponse.status}`);
+      const errorText = await response.text();
+      throw new Error(`Failed to generate summary: HTTP ${response.status} - ${errorText}`);
     }
 
   } catch (error) {
