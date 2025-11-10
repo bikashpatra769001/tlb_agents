@@ -85,7 +85,8 @@ interface SummaryResponse {
 const API_BASE_URL = 'http://0.0.0.0:8000'
 const ALLOWED_URLS = [
   'https://bhulekh.ori.nic.in/SRoRFront_Uni.aspx',
-  'https://bhulekh.ori.nic.in/CRoRFront_Uni.aspx'
+  'https://bhulekh.ori.nic.in/CRoRFront_Uni.aspx',
+  'https://bhulekh.ori.nic.in/ViewRoR.aspx'
 ] as const;
 const TESTER_ID_STORAGE_KEY = 'bhulekha_tester_id';
 
