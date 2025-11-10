@@ -377,11 +377,167 @@ function displayStructuredSummary(result: any): void {
 
   let html = '';
 
-  // Check if the API returned html_summary - if so, use it directly
-  if (result.html_summary && typeof result.html_summary === 'string') {
-    html = result.html_summary;
+  // Check if the API returned the new structured format
+  if (result.locationDetails || result.ownershipDetailsSection || result.plotDetailsSection) {
 
-    // Add Next Steps section after the html_summary
+    // 1. Summary Section - Create an overview
+    html += '<div class="summary-section" style="margin-bottom: 20px; padding: 15px; background: #e3f2fd; border-radius: 5px;">';
+    html += '<h3 style="color: #1976d2; margin-top: 0;">📋 Land Record Summary</h3>';
+
+    if (result.locationDetails && result.khatiyanDetails) {
+      const loc = result.locationDetails;
+      const khata = result.khatiyanDetails;
+      html += `<p style="line-height: 1.8; margin: 10px 0;">This is <strong>Khatiyan #${khata.khatiyanNumber}</strong> located in <strong>${loc.villageEnglish}, ${loc.tehsilEnglish}, ${loc.districtEnglish}</strong>. `;
+
+      if (result.totalArea) {
+        html += `The property spans <strong>${result.totalArea.hectares} hectares</strong> (${result.totalArea.acres} acres) `;
+      }
+
+      if (result.plotDetailsSection) {
+        html += `across <strong>${result.plotDetailsSection.numberOfPlots} plots</strong>. `;
+      }
+
+      if (result.ownershipDetailsSection) {
+        html += `Ownership: <strong>${result.ownershipDetailsSection.ownershipType}</strong>.`;
+      }
+
+      html += '</p>';
+    }
+    html += '</div>';
+
+    // 2. Location Details Section
+    if (result.locationDetails) {
+      const loc = result.locationDetails;
+      html += '<div class="location-section" style="margin-bottom: 20px;">';
+      html += '<h3 style="color: #1976d2; margin-bottom: 10px;">📍 Location Details</h3>';
+      html += '<table class="extraction-table" style="width: 100%; border-collapse: collapse;">';
+      html += `<tr><td style="padding: 8px; border-bottom: 1px solid #e0e0e0; width: 40%;"><strong>District:</strong></td><td style="padding: 8px; border-bottom: 1px solid #e0e0e0;">${loc.districtEnglish} (${loc.districtNative})</td></tr>`;
+      html += `<tr><td style="padding: 8px; border-bottom: 1px solid #e0e0e0;"><strong>Tehsil:</strong></td><td style="padding: 8px; border-bottom: 1px solid #e0e0e0;">${loc.tehsilEnglish} (${loc.tehsilNative})</td></tr>`;
+      html += `<tr><td style="padding: 8px; border-bottom: 1px solid #e0e0e0;"><strong>Village:</strong></td><td style="padding: 8px; border-bottom: 1px solid #e0e0e0;">${loc.villageEnglish} (${loc.villageNative})</td></tr>`;
+      if (result.khatiyanDetails) {
+        html += `<tr><td style="padding: 8px; border-bottom: 1px solid #e0e0e0;"><strong>Khatiyan Number:</strong></td><td style="padding: 8px; border-bottom: 1px solid #e0e0e0;">${result.khatiyanDetails.khatiyanNumber}</td></tr>`;
+      }
+      html += '</table>';
+      html += '</div>';
+    }
+
+    // 3. Owner Details Section
+    if (result.ownershipDetailsSection) {
+      const owner = result.ownershipDetailsSection;
+      html += '<div class="owner-section" style="margin-bottom: 20px;">';
+      html += '<h3 style="color: #1976d2; margin-bottom: 10px;">👤 Owner Details</h3>';
+      html += '<table class="extraction-table" style="width: 100%; border-collapse: collapse;">';
+
+      if (owner.ownerName) {
+        html += `<tr><td style="padding: 8px; border-bottom: 1px solid #e0e0e0; width: 40%;"><strong>Owner(s):</strong></td><td style="padding: 8px; border-bottom: 1px solid #e0e0e0;">${owner.ownerName}</td></tr>`;
+      }
+      if (owner.ownerType) {
+        html += `<tr><td style="padding: 8px; border-bottom: 1px solid #e0e0e0;"><strong>Ownership Type:</strong></td><td style="padding: 8px; border-bottom: 1px solid #e0e0e0;">${owner.ownerType}</td></tr>`;
+      }
+      if (owner.ownershipType) {
+        html += `<tr><td style="padding: 8px; border-bottom: 1px solid #e0e0e0;"><strong>Status:</strong></td><td style="padding: 8px; border-bottom: 1px solid #e0e0e0;">${owner.ownershipType}</td></tr>`;
+      }
+      if (owner.ownerCaste) {
+        html += `<tr><td style="padding: 8px; border-bottom: 1px solid #e0e0e0;"><strong>Caste:</strong></td><td style="padding: 8px; border-bottom: 1px solid #e0e0e0;">${owner.ownerCaste} (${owner.ownerCasteNative || ''})</td></tr>`;
+      }
+      if (owner.ownerAddress) {
+        html += `<tr><td style="padding: 8px; border-bottom: 1px solid #e0e0e0;"><strong>Address:</strong></td><td style="padding: 8px; border-bottom: 1px solid #e0e0e0;">${owner.ownerAddress}</td></tr>`;
+      }
+
+      html += '</table>';
+      html += '</div>';
+    }
+
+    // 4. Plot Information Section
+    if (result.plotDetailsSection || result.totalArea) {
+      html += '<div class="plot-section" style="margin-bottom: 20px;">';
+      html += '<h3 style="color: #1976d2; margin-bottom: 10px;">🗺️ Plot Information</h3>';
+      html += '<table class="extraction-table" style="width: 100%; border-collapse: collapse;">';
+
+      if (result.plotDetailsSection) {
+        html += `<tr><td style="padding: 8px; border-bottom: 1px solid #e0e0e0; width: 40%;"><strong>Number of Plots:</strong></td><td style="padding: 8px; border-bottom: 1px solid #e0e0e0;">${result.plotDetailsSection.numberOfPlots}</td></tr>`;
+      }
+
+      if (result.totalArea) {
+        html += `<tr><td style="padding: 8px; border-bottom: 1px solid #e0e0e0;"><strong>Total Area:</strong></td><td style="padding: 8px; border-bottom: 1px solid #e0e0e0;">${result.totalArea.hectares} hectares (${result.totalArea.acres} acres, ${result.totalArea.decimals} decimals)</td></tr>`;
+      }
+
+      if (result.plotDetailsSection && result.plotDetailsSection.individualPlots) {
+        const plotNumbers = result.plotDetailsSection.individualPlots.map((p: any) => p.plotNumber).join(', ');
+        html += `<tr><td style="padding: 8px; border-bottom: 1px solid #e0e0e0;"><strong>Plot Numbers:</strong></td><td style="padding: 8px; border-bottom: 1px solid #e0e0e0;">${plotNumbers}</td></tr>`;
+      }
+
+      if (result.khatiyanDetails && result.khatiyanDetails.financialDues) {
+        const dues = result.khatiyanDetails.financialDues;
+        html += `<tr><td style="padding: 8px; border-bottom: 1px solid #e0e0e0;"><strong>Total Financial Dues:</strong></td><td style="padding: 8px; border-bottom: 1px solid #e0e0e0;">₹${dues.total} (Land Tax: ₹${dues.landTax}, Cess: ₹${dues.cess})</td></tr>`;
+      }
+
+      html += '</table>';
+      html += '</div>';
+    }
+
+    // 5. Risk & Safety Section
+    if (result.riskSafetySection) {
+      const risk = result.riskSafetySection;
+      html += '<div class="risk-section" style="margin-bottom: 20px; padding: 15px; background: #fff3cd; border-radius: 5px;">';
+      html += '<h3 style="color: #f57c00; margin-top: 0;">⚠️ Risk & Safety Assessment</h3>';
+
+      if (risk.safetyScore !== undefined) {
+        const scoreColor = risk.safetyScore >= 7 ? '#4caf50' : risk.safetyScore >= 4 ? '#ff9800' : '#f44336';
+        html += `<p style="margin: 10px 0;"><strong>Safety Score:</strong> <span style="color: ${scoreColor}; font-size: 1.2em; font-weight: bold;">${risk.safetyScore}/10</span></p>`;
+      }
+
+      if (risk.riskFactors && risk.riskFactors.length > 0) {
+        html += '<p style="margin: 10px 0;"><strong>Risk Factors:</strong></p>';
+        html += '<ul style="margin: 0; padding-left: 20px; line-height: 1.8;">';
+        risk.riskFactors.forEach((factor: string) => {
+          html += `<li style="margin-bottom: 8px;">${factor}</li>`;
+        });
+        html += '</ul>';
+      }
+
+      html += '</div>';
+    }
+
+    // 6. Next Steps Section
+    if (result.nextStepsSection) {
+      const nextSteps = result.nextStepsSection;
+      html += '<div class="next-steps-section" style="margin-bottom: 20px; background: #f5f5f5; padding: 15px; border-radius: 5px;">';
+      html += '<h3 style="color: #1976d2; margin-top: 0;">🎯 Next Steps</h3>';
+
+      if (nextSteps.requiredVerifications && nextSteps.requiredVerifications.length > 0) {
+        html += '<p style="margin: 10px 0;"><strong>Required Verifications:</strong></p>';
+        html += '<ul style="margin: 0; padding-left: 20px; line-height: 1.8;">';
+        nextSteps.requiredVerifications.forEach((item: string) => {
+          html += `<li style="margin-bottom: 8px;">${item}</li>`;
+        });
+        html += '</ul>';
+      }
+
+      if (nextSteps.additionalDocumentsNeeded && nextSteps.additionalDocumentsNeeded.length > 0) {
+        html += '<p style="margin: 15px 0 10px 0;"><strong>Additional Documents Needed:</strong></p>';
+        html += '<ul style="margin: 0; padding-left: 20px; line-height: 1.8;">';
+        nextSteps.additionalDocumentsNeeded.forEach((item: string) => {
+          html += `<li style="margin-bottom: 8px;">${item}</li>`;
+        });
+        html += '</ul>';
+      }
+
+      if (nextSteps.recommendedActions && nextSteps.recommendedActions.length > 0) {
+        html += '<p style="margin: 15px 0 10px 0;"><strong>Recommended Actions:</strong></p>';
+        html += '<ul style="margin: 0; padding-left: 20px; line-height: 1.8;">';
+        nextSteps.recommendedActions.forEach((item: string) => {
+          html += `<li style="margin-bottom: 8px;">${item}</li>`;
+        });
+        html += '</ul>';
+      }
+
+      html += '</div>';
+    }
+
+  } else if (result.html_summary && typeof result.html_summary === 'string') {
+    // Fallback: Old format with html_summary
+    html = result.html_summary;
     html += '<div class="next-steps-section" style="margin-top: 20px; margin-bottom: 20px; background: #f5f5f5; padding: 15px; border-radius: 5px;">';
     html += '<h3 style="color: #1976d2; margin-bottom: 10px;">🎯 Next Steps</h3>';
     html += '<ul style="margin: 0; padding-left: 20px; line-height: 1.8;">';
@@ -389,112 +545,15 @@ function displayStructuredSummary(result: any): void {
     html += '<li>Check for any pending mutations or legal disputes</li>';
     html += '<li>Visit the land physically to verify boundaries</li>';
     html += '<li>Consult with a legal expert before any transactions</li>';
-    html += '<li>Use the action buttons below to apply for EC (Encumbrance Certificate) or CC (Caste Certificate)</li>';
     html += '</ul>';
     html += '</div>';
-  } else {
-    // Fallback: Build structured sections from individual fields
-
-    // 1. Summary Section
-    if (result.summary || result.explanation) {
-      html += '<div class="summary-section" style="margin-bottom: 20px;">';
-      html += '<h3 style="color: #1976d2; margin-bottom: 10px;">📋 Summary</h3>';
-      html += `<p style="line-height: 1.6;">${result.summary || result.explanation}</p>`;
-      html += '</div>';
-    }
-
-    // 2. Owner Details Section
-    if (result.owner_details || result.owner) {
-      const owner = result.owner_details || result.owner || {};
-      html += '<div class="owner-section" style="margin-bottom: 20px;">';
-      html += '<h3 style="color: #1976d2; margin-bottom: 10px;">👤 Owner Details</h3>';
-      html += '<table class="extraction-table" style="width: 100%; border-collapse: collapse;">';
-
-      if (owner.owner_name || owner.name) {
-        html += `<tr><td style="padding: 8px; border-bottom: 1px solid #e0e0e0;"><strong>Owner Name:</strong></td><td style="padding: 8px; border-bottom: 1px solid #e0e0e0;">${owner.owner_name || owner.name}</td></tr>`;
-      }
-      if (owner.father_name) {
-        html += `<tr><td style="padding: 8px; border-bottom: 1px solid #e0e0e0;"><strong>Father's Name:</strong></td><td style="padding: 8px; border-bottom: 1px solid #e0e0e0;">${owner.father_name}</td></tr>`;
-      }
-      if (owner.caste && owner.caste !== 'Not found') {
-        html += `<tr><td style="padding: 8px; border-bottom: 1px solid #e0e0e0;"><strong>Caste:</strong></td><td style="padding: 8px; border-bottom: 1px solid #e0e0e0;">${owner.caste}</td></tr>`;
-      }
-      if (owner.other_owners && owner.other_owners !== 'None mentioned') {
-        html += `<tr><td style="padding: 8px; border-bottom: 1px solid #e0e0e0;"><strong>Co-owners:</strong></td><td style="padding: 8px; border-bottom: 1px solid #e0e0e0;">${owner.other_owners}</td></tr>`;
-      }
-
-      html += '</table>';
-      html += '</div>';
-    }
-
-    // 3. Plot Information Section
-    if (result.plot_information || result.plots || result.land_details) {
-      const plots = result.plot_information || result.plots || result.land_details || {};
-      html += '<div class="plot-section" style="margin-bottom: 20px;">';
-      html += '<h3 style="color: #1976d2; margin-bottom: 10px;">🗺️ Plot Information</h3>';
-      html += '<table class="extraction-table" style="width: 100%; border-collapse: collapse;">';
-
-      if (plots.total_plots || plots.plot_count) {
-        html += `<tr><td style="padding: 8px; border-bottom: 1px solid #e0e0e0;"><strong>Total Plots:</strong></td><td style="padding: 8px; border-bottom: 1px solid #e0e0e0;">${plots.total_plots || plots.plot_count}</td></tr>`;
-      }
-      if (plots.total_area || plots.area) {
-        html += `<tr><td style="padding: 8px; border-bottom: 1px solid #e0e0e0;"><strong>Total Area:</strong></td><td style="padding: 8px; border-bottom: 1px solid #e0e0e0;">${plots.total_area || plots.area}</td></tr>`;
-      }
-      if (plots.land_type || plots.type) {
-        html += `<tr><td style="padding: 8px; border-bottom: 1px solid #e0e0e0;"><strong>Land Type:</strong></td><td style="padding: 8px; border-bottom: 1px solid #e0e0e0;">${plots.land_type || plots.type}</td></tr>`;
-      }
-      if (plots.plot_numbers) {
-        html += `<tr><td style="padding: 8px; border-bottom: 1px solid #e0e0e0;"><strong>Plot Numbers:</strong></td><td style="padding: 8px; border-bottom: 1px solid #e0e0e0;">${plots.plot_numbers}</td></tr>`;
-      }
-
-      html += '</table>';
-      html += '</div>';
-    }
-
-    // 4. Location Information Section (if available)
-    if (result.location) {
-      const location = result.location;
-      html += '<div class="location-section" style="margin-bottom: 20px;">';
-      html += '<h3 style="color: #1976d2; margin-bottom: 10px;">📍 Location</h3>';
-      html += '<table class="extraction-table" style="width: 100%; border-collapse: collapse;">';
-
-      if (location.district) {
-        html += `<tr><td style="padding: 8px; border-bottom: 1px solid #e0e0e0;"><strong>District:</strong></td><td style="padding: 8px; border-bottom: 1px solid #e0e0e0;">${location.district}</td></tr>`;
-      }
-      if (location.tehsil || location.tahasil) {
-        html += `<tr><td style="padding: 8px; border-bottom: 1px solid #e0e0e0;"><strong>Tehsil:</strong></td><td style="padding: 8px; border-bottom: 1px solid #e0e0e0;">${location.tehsil || location.tahasil}</td></tr>`;
-      }
-      if (location.village) {
-        html += `<tr><td style="padding: 8px; border-bottom: 1px solid #e0e0e0;"><strong>Village:</strong></td><td style="padding: 8px; border-bottom: 1px solid #e0e0e0;">${location.village}</td></tr>`;
-      }
-      if (location.khatiyan_number || location.khata_number) {
-        html += `<tr><td style="padding: 8px; border-bottom: 1px solid #e0e0e0;"><strong>Khatiyan Number:</strong></td><td style="padding: 8px; border-bottom: 1px solid #e0e0e0;">${location.khatiyan_number || location.khata_number}</td></tr>`;
-      }
-
-      html += '</table>';
-      html += '</div>';
-    }
-
-    // 5. Next Steps Section (only if we have any content)
-    if (html) {
-      html += '<div class="next-steps-section" style="margin-bottom: 20px; background: #f5f5f5; padding: 15px; border-radius: 5px;">';
-      html += '<h3 style="color: #1976d2; margin-bottom: 10px;">🎯 Next Steps</h3>';
-      html += '<ul style="margin: 0; padding-left: 20px; line-height: 1.8;">';
-      html += '<li>Verify the ownership details with the actual land records</li>';
-      html += '<li>Check for any pending mutations or legal disputes</li>';
-      html += '<li>Visit the land physically to verify boundaries</li>';
-      html += '<li>Consult with a legal expert before any transactions</li>';
-      html += '<li>Use the action buttons below to apply for EC (Encumbrance Certificate) or CC (Caste Certificate)</li>';
-      html += '</ul>';
-      html += '</div>';
-    }
   }
 
   // If still no content, show the raw response for debugging
   if (!html) {
     html = '<div style="padding: 10px; background: #fff3cd; border-radius: 5px;">';
     html += '<p><strong>Unable to parse summary. Raw response:</strong></p>';
-    html += `<pre style="white-space: pre-wrap; word-wrap: break-word;">${JSON.stringify(result, null, 2)}</pre>`;
+    html += `<pre style="white-space: pre-wrap; word-wrap: break-word; max-height: 400px; overflow-y: auto;">${JSON.stringify(result, null, 2)}</pre>`;
     html += '</div>';
   }
 
