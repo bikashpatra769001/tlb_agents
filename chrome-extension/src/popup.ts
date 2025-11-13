@@ -378,28 +378,31 @@ function displayStructuredSummary(result: any): void {
 
   let html = '';
 
+  // Extract plotSummary if it exists (new API response format)
+  const summaryData = result.plotSummary || result;
+
   // Check if the API returned the new structured format
-  if (result.locationDetails || result.ownershipDetailsSection || result.plotDetailsSection) {
+  if (summaryData.locationDetails || summaryData.ownershipDetailsSection || summaryData.plotDetailsSection) {
 
     // 1. Summary Section - Create an overview
     html += '<div class="summary-section" style="margin-bottom: 20px; padding: 15px; background: #e3f2fd; border-radius: 5px;">';
     html += '<h3 style="color: #1976d2; margin-top: 0;">📋 Land Record Summary</h3>';
 
-    if (result.locationDetails && result.khatiyanDetails) {
-      const loc = result.locationDetails;
-      const khata = result.khatiyanDetails;
+    if (summaryData.locationDetails && summaryData.khatiyanDetails) {
+      const loc = summaryData.locationDetails;
+      const khata = summaryData.khatiyanDetails;
       html += `<p style="line-height: 1.8; margin: 10px 0;">This is <strong>Khatiyan #${khata.khatiyanNumber}</strong> located in <strong>${loc.villageEnglish}, ${loc.tehsilEnglish}, ${loc.districtEnglish}</strong>. `;
 
-      if (result.totalArea) {
-        html += `The property spans <strong>${result.totalArea.hectares} hectares</strong> (${result.totalArea.acres} acres) `;
+      if (summaryData.totalArea) {
+        html += `The property spans <strong>${summaryData.totalArea.hectares} hectares</strong> (${summaryData.totalArea.acres} acres) `;
       }
 
-      if (result.plotDetailsSection) {
-        html += `across <strong>${result.plotDetailsSection.numberOfPlots} plots</strong>. `;
+      if (summaryData.plotDetailsSection) {
+        html += `across <strong>${summaryData.plotDetailsSection.numberOfPlots} plots</strong>. `;
       }
 
-      if (result.ownershipDetailsSection) {
-        html += `Ownership: <strong>${result.ownershipDetailsSection.ownershipType}</strong>.`;
+      if (summaryData.ownershipDetailsSection) {
+        html += `Ownership: <strong>${summaryData.ownershipDetailsSection.ownershipType}</strong>.`;
       }
 
       html += '</p>';
@@ -407,24 +410,24 @@ function displayStructuredSummary(result: any): void {
     html += '</div>';
 
     // 2. Location Details Section
-    if (result.locationDetails) {
-      const loc = result.locationDetails;
+    if (summaryData.locationDetails) {
+      const loc = summaryData.locationDetails;
       html += '<div class="location-section" style="margin-bottom: 20px;">';
       html += '<h3 style="color: #1976d2; margin-bottom: 10px;">📍 Location Details</h3>';
       html += '<table class="extraction-table" style="width: 100%; border-collapse: collapse;">';
       html += `<tr><td style="padding: 8px; border-bottom: 1px solid #e0e0e0; width: 40%;"><strong>District:</strong></td><td style="padding: 8px; border-bottom: 1px solid #e0e0e0;">${loc.districtEnglish} (${loc.districtNative})</td></tr>`;
       html += `<tr><td style="padding: 8px; border-bottom: 1px solid #e0e0e0;"><strong>Tehsil:</strong></td><td style="padding: 8px; border-bottom: 1px solid #e0e0e0;">${loc.tehsilEnglish} (${loc.tehsilNative})</td></tr>`;
       html += `<tr><td style="padding: 8px; border-bottom: 1px solid #e0e0e0;"><strong>Village:</strong></td><td style="padding: 8px; border-bottom: 1px solid #e0e0e0;">${loc.villageEnglish} (${loc.villageNative})</td></tr>`;
-      if (result.khatiyanDetails) {
-        html += `<tr><td style="padding: 8px; border-bottom: 1px solid #e0e0e0;"><strong>Khatiyan Number:</strong></td><td style="padding: 8px; border-bottom: 1px solid #e0e0e0;">${result.khatiyanDetails.khatiyanNumber}</td></tr>`;
+      if (summaryData.khatiyanDetails) {
+        html += `<tr><td style="padding: 8px; border-bottom: 1px solid #e0e0e0;"><strong>Khatiyan Number:</strong></td><td style="padding: 8px; border-bottom: 1px solid #e0e0e0;">${summaryData.khatiyanDetails.khatiyanNumber}</td></tr>`;
       }
       html += '</table>';
       html += '</div>';
     }
 
     // 3. Owner Details Section
-    if (result.ownershipDetailsSection) {
-      const owner = result.ownershipDetailsSection;
+    if (summaryData.ownershipDetailsSection) {
+      const owner = summaryData.ownershipDetailsSection;
       html += '<div class="owner-section" style="margin-bottom: 20px;">';
       html += '<h3 style="color: #1976d2; margin-bottom: 10px;">👤 Owner Details</h3>';
       html += '<table class="extraction-table" style="width: 100%; border-collapse: collapse;">';
@@ -450,26 +453,26 @@ function displayStructuredSummary(result: any): void {
     }
 
     // 4. Plot Information Section
-    if (result.plotDetailsSection || result.totalArea) {
+    if (summaryData.plotDetailsSection || summaryData.totalArea) {
       html += '<div class="plot-section" style="margin-bottom: 20px;">';
       html += '<h3 style="color: #1976d2; margin-bottom: 10px;">🗺️ Plot Information</h3>';
       html += '<table class="extraction-table" style="width: 100%; border-collapse: collapse;">';
 
-      if (result.plotDetailsSection) {
-        html += `<tr><td style="padding: 8px; border-bottom: 1px solid #e0e0e0; width: 40%;"><strong>Number of Plots:</strong></td><td style="padding: 8px; border-bottom: 1px solid #e0e0e0;">${result.plotDetailsSection.numberOfPlots}</td></tr>`;
+      if (summaryData.plotDetailsSection) {
+        html += `<tr><td style="padding: 8px; border-bottom: 1px solid #e0e0e0; width: 40%;"><strong>Number of Plots:</strong></td><td style="padding: 8px; border-bottom: 1px solid #e0e0e0;">${summaryData.plotDetailsSection.numberOfPlots}</td></tr>`;
       }
 
-      if (result.totalArea) {
-        html += `<tr><td style="padding: 8px; border-bottom: 1px solid #e0e0e0;"><strong>Total Area:</strong></td><td style="padding: 8px; border-bottom: 1px solid #e0e0e0;">${result.totalArea.hectares} hectares (${result.totalArea.acres} acres, ${result.totalArea.decimals} decimals)</td></tr>`;
+      if (summaryData.totalArea) {
+        html += `<tr><td style="padding: 8px; border-bottom: 1px solid #e0e0e0;"><strong>Total Area:</strong></td><td style="padding: 8px; border-bottom: 1px solid #e0e0e0;">${summaryData.totalArea.hectares} hectares (${summaryData.totalArea.acres} acres, ${summaryData.totalArea.decimals} decimals)</td></tr>`;
       }
 
-      if (result.plotDetailsSection && result.plotDetailsSection.individualPlots) {
-        const plotNumbers = result.plotDetailsSection.individualPlots.map((p: any) => p.plotNumber).join(', ');
+      if (summaryData.plotDetailsSection && summaryData.plotDetailsSection.individualPlots) {
+        const plotNumbers = summaryData.plotDetailsSection.individualPlots.map((p: any) => p.plotNumber).join(', ');
         html += `<tr><td style="padding: 8px; border-bottom: 1px solid #e0e0e0;"><strong>Plot Numbers:</strong></td><td style="padding: 8px; border-bottom: 1px solid #e0e0e0;">${plotNumbers}</td></tr>`;
       }
 
-      if (result.khatiyanDetails && result.khatiyanDetails.financialDues) {
-        const dues = result.khatiyanDetails.financialDues;
+      if (summaryData.khatiyanDetails && summaryData.khatiyanDetails.financialDues) {
+        const dues = summaryData.khatiyanDetails.financialDues;
         html += `<tr><td style="padding: 8px; border-bottom: 1px solid #e0e0e0;"><strong>Total Financial Dues:</strong></td><td style="padding: 8px; border-bottom: 1px solid #e0e0e0;">₹${dues.total} (Land Tax: ₹${dues.landTax}, Cess: ₹${dues.cess})</td></tr>`;
       }
 
@@ -478,8 +481,8 @@ function displayStructuredSummary(result: any): void {
     }
 
     // 5. Risk & Safety Section
-    if (result.riskSafetySection) {
-      const risk = result.riskSafetySection;
+    if (summaryData.riskSafetySection) {
+      const risk = summaryData.riskSafetySection;
       html += '<div class="risk-section" style="margin-bottom: 20px; padding: 15px; background: #fff3cd; border-radius: 5px;">';
       html += '<h3 style="color: #f57c00; margin-top: 0;">⚠️ Risk & Safety Assessment</h3>';
 
@@ -501,8 +504,8 @@ function displayStructuredSummary(result: any): void {
     }
 
     // 6. Next Steps Section
-    if (result.nextStepsSection) {
-      const nextSteps = result.nextStepsSection;
+    if (summaryData.nextStepsSection) {
+      const nextSteps = summaryData.nextStepsSection;
       html += '<div class="next-steps-section" style="margin-bottom: 20px; background: #f5f5f5; padding: 15px; border-radius: 5px;">';
       html += '<h3 style="color: #1976d2; margin-top: 0;">🎯 Next Steps</h3>';
 
@@ -536,9 +539,9 @@ function displayStructuredSummary(result: any): void {
       html += '</div>';
     }
 
-  } else if (result.html_summary && typeof result.html_summary === 'string') {
+  } else if (summaryData.html_summary && typeof summaryData.html_summary === 'string') {
     // Fallback: Old format with html_summary
-    html = result.html_summary;
+    html = summaryData.html_summary;
     html += '<div class="next-steps-section" style="margin-top: 20px; margin-bottom: 20px; background: #f5f5f5; padding: 15px; border-radius: 5px;">';
     html += '<h3 style="color: #1976d2; margin-bottom: 10px;">🎯 Next Steps</h3>';
     html += '<ul style="margin: 0; padding-left: 20px; line-height: 1.8;">';
